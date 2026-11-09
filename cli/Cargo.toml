@@ -1,0 +1,9 @@
+[package]
+name = "flock"
+version = "0.1.0"
+edition = "2021"
+description = "Claude Code のエージェントを zellij で並べて見張る"
+
+[dependencies]
+libc = "0.2"
+serde_json = { version = "1", features = ["preserve_order"] }

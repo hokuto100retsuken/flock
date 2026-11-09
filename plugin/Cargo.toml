@@ -1,0 +1,13 @@
+[package]
+name = "flock-plugin"
+version = "0.1.0"
+edition = "2021"
+
+# zellij が読み込む WASM。wasm32-wasip1 向けにビルドする
+[[bin]]
+name = "flock-plugin"
+path = "src/main.rs"
+
+[dependencies]
+unicode-width = "0.2"
+zellij-tile = "0.45.1"

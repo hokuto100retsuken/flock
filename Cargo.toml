@@ -1,11 +1,6 @@
-[package]
-name = "flock"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-unicode-width = "0.2"
-zellij-tile = "0.45.1"
+[workspace]
+members = ["plugin", "cli"]
+resolver = "2"
 
 [profile.release]
 opt-level = "s"
