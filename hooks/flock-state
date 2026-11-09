@@ -1,0 +1,8 @@
+#!/bin/sh
+# Claude Code のフックから呼び、このペインの状態を flock に送る。
+# 使い方: flock-state working|blocked|stop|idle|end
+# zellij の外では何もしない。フックを止めないよう、送信の失敗は無視する。
+[ -n "$ZELLIJ_PANE_ID" ] || exit 0
+cat >/dev/null
+zellij pipe --name flock --args "pane=$ZELLIJ_PANE_ID,state=$1" -- "" >/dev/null 2>&1 </dev/null
+exit 0
