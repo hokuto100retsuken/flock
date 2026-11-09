@@ -87,6 +87,8 @@ pub struct Group {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub time: String,
+    /// 押したときに開く詳細のファイル。ないときは空
+    pub file: String,
     pub text: String,
 }
 
@@ -141,7 +143,7 @@ impl Model {
     }
 
     /// 報告をログに残す。detail はフックが拾った中身（指示の1行目、ツールと対象など）
-    pub fn record(&mut self, pane_id: u32, report: &Report, time: &str, detail: &str) {
+    pub fn record(&mut self, pane_id: u32, report: &Report, time: &str, file: &str, detail: &str) {
         let text = match report {
             Report::Working if !detail.is_empty() => detail.to_owned(),
             Report::Blocked => format!("● {detail}"),
@@ -154,6 +156,7 @@ impl Model {
         }
         log.push_back(Entry {
             time: time.to_owned(),
+            file: file.to_owned(),
             text,
         });
     }
@@ -167,7 +170,7 @@ impl Model {
     }
 
     /// 他のタブのサイドバーへ渡す形。1行に1件、タブ区切り
-    /// （`s 3 working` で状態、`l 3 12:03 Edit main.rs` でログ）
+    /// （`s 3 working` で状態、`l 3 12:03 <詳細のファイル> Edit main.rs` でログ）
     pub fn export(&self) -> String {
         let statuses = self
             .statuses
@@ -175,7 +178,7 @@ impl Model {
             .map(|(id, status)| format!("s\t{id}\t{}", status.as_str()));
         let logs = self.logs.iter().flat_map(|(id, log)| {
             log.iter()
-                .map(move |e| format!("l\t{id}\t{}\t{}", e.time, e.text))
+                .map(move |e| format!("l\t{id}\t{}\t{}\t{}", e.time, e.file, e.text))
         });
         statuses.chain(logs).collect::<Vec<_>>().join("\n")
     }
@@ -191,10 +194,11 @@ impl Model {
                         self.statuses.entry(id).or_insert(status);
                     }
                 }
-                ["l", id, time, text] => {
+                ["l", id, time, file, text] => {
                     if let Ok(id) = id.parse() {
                         logs.entry(id).or_default().push_back(Entry {
                             time: time.to_owned(),
+                            file: file.to_owned(),
                             text: text.to_owned(),
                         });
                     }
@@ -396,13 +400,14 @@ mod tests {
     fn 取り込みはログも知らないペインの分だけ足す() {
         let mut from = model();
         from.apply(3, Report::Working);
-        from.record(3, &Report::Working, "12:00", "Edit main.rs");
-        from.record(5, &Report::Working, "12:01", "Bash ls");
+        from.record(3, &Report::Working, "12:00", "/tmp/a.txt", "Edit main.rs");
+        from.record(5, &Report::Working, "12:01", "", "Bash ls");
         let mut to = model();
-        to.record(5, &Report::Stop, "12:02", "");
+        to.record(5, &Report::Stop, "12:02", "", "");
         to.import(&from.export());
         let texts = |id| to.log(id).map(|e| e.text.clone()).collect::<Vec<_>>();
         assert_eq!(texts(3), vec!["Edit main.rs"]);
+        assert_eq!(to.log(3).next().unwrap().file, "/tmp/a.txt");
         assert_eq!(texts(5), vec!["✓ 完了"]);
     }
 
@@ -410,7 +415,7 @@ mod tests {
     fn ログは上限を超えると古いものから消える() {
         let mut m = model();
         for i in 0..=LOG_LIMIT {
-            m.record(3, &Report::Working, "12:00", &i.to_string());
+            m.record(3, &Report::Working, "12:00", "", &i.to_string());
         }
         assert_eq!(m.log(3).count(), LOG_LIMIT);
         assert_eq!(m.log(3).next().unwrap().text, "1");

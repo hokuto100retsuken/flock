@@ -14,6 +14,8 @@ const NEXT: &str = "flock-next";
 const PREV: &str = "flock-prev";
 const FOCUS: &str = "flock-focus";
 const LOG_TOGGLE: &str = "flock-log-toggle";
+/// 詳細を開いたペインの目印
+const DETAIL: &str = "flock-detail";
 
 // セッションの中だけで効かせる。zellij の設定ファイルには書かない
 const KEYBINDS: &str = r#"
@@ -55,6 +57,8 @@ struct State {
     fitted_from: Option<usize>,
     /// 一度隠して戻した
     restored: bool,
+    /// ログの各行を押したときに開く詳細のファイル
+    row_files: Vec<String>,
 }
 
 register_plugin!(State);
@@ -70,12 +74,14 @@ impl ZellijPlugin for State {
             PermissionType::ChangeApplicationState,
             PermissionType::MessageAndLaunchOtherPlugins,
             PermissionType::Reconfigure,
+            PermissionType::RunCommands,
         ]);
         subscribe(&[
             EventType::PaneUpdate,
             EventType::TabUpdate,
             EventType::PermissionRequestResult,
             EventType::Mouse,
+            EventType::CommandPaneExited,
         ]);
     }
 
@@ -97,8 +103,17 @@ impl ZellijPlugin for State {
             Event::TabUpdate(tabs) => self.tabs = tabs,
             // 権限の確認ダイアログに答えられるよう、許可されるまではフォーカスできるままにする
             Event::PermissionRequestResult(PermissionStatus::Granted) => set_selectable(false),
-            Event::Mouse(Mouse::LeftClick(line, _)) if !self.log_view => {
+            Event::Mouse(Mouse::LeftClick(line, _)) if self.log_view => {
+                self.open_detail(line);
+                return false;
+            }
+            Event::Mouse(Mouse::LeftClick(line, _)) => {
                 self.focus_line(line);
+                return false;
+            }
+            // 詳細は less を閉じたらペインごと閉じる。閉じないと終了したペインが残る
+            Event::CommandPaneExited(pane_id, _, context) if context.contains_key(DETAIL) => {
+                close_terminal_pane(pane_id);
                 return false;
             }
             _ => return false,
@@ -165,10 +180,12 @@ impl ZellijPlugin for State {
         let report = message.args.get("state").and_then(|v| Report::parse(v));
         match (pane_id, report) {
             (Some(pane_id), Some(report)) => {
-                // 中身は「12:03 Edit main.rs」の形。時刻はフック側で付ける
+                // 中身は「時刻 タブ 詳細のファイル タブ ログの1行」。時刻はフック側で付ける
                 let payload = message.payload.as_deref().unwrap_or_default();
-                let (time, detail) = payload.split_once(' ').unwrap_or((payload, ""));
-                self.model.record(pane_id, &report, time, detail);
+                let mut fields = payload.splitn(3, '\t');
+                let mut field = || fields.next().unwrap_or_default();
+                let (time, file, detail) = (field(), field(), field());
+                self.model.record(pane_id, &report, time, file, detail);
                 self.model.apply(pane_id, report);
                 true
             }
@@ -205,6 +222,7 @@ impl State {
         let bar = if self.restored { String::new() } else { format!("{DIM}│{RESET}") };
         let width = cols.saturating_sub(2);
         let mut lines = Vec::new();
+        self.row_files.clear();
         if let Some((pane_id, title)) = self.log_target() {
             let (icon, color) = self
                 .model
@@ -216,7 +234,9 @@ impl State {
             lines.push(String::new());
             let entries: Vec<_> = self.model.log(pane_id).collect();
             let room = rows.saturating_sub(lines.len());
+            self.row_files = vec![String::new(); lines.len()];
             for entry in &entries[entries.len().saturating_sub(room)..] {
+                self.row_files.push(entry.file.clone());
                 let text = truncate(&entry.text, width.saturating_sub(entry.time.len() + 1));
                 // 指示は操作と見分けやすいよう太字にする
                 let style = if text.starts_with("> ") { BOLD } else { "" };
@@ -227,6 +247,28 @@ impl State {
         lines.resize(rows, String::new());
         let lines: Vec<String> = lines.iter().map(|l| format!("{bar} {l}")).collect();
         print!("{}", lines.join("\n"));
+    }
+
+    fn open_detail(&self, line: isize) {
+        let Some(file) = usize::try_from(line)
+            .ok()
+            .and_then(|i| self.row_files.get(i))
+            .filter(|f| !f.is_empty())
+        else {
+            return;
+        };
+        open_command_pane_floating(
+            CommandToRun::new_with_args("less", vec!["-R", file]),
+            FloatingPaneCoordinates::new(
+                Some("10%".into()),
+                Some("10%".into()),
+                Some("80%".into()),
+                Some("80%".into()),
+                None,
+                None,
+            ),
+            BTreeMap::from([(DETAIL.to_owned(), String::new())]),
+        );
     }
 
     /// 隠したペインを戻すと、zellij は隣のペインを半分に割った幅で戻すので、元の幅まで縮める
