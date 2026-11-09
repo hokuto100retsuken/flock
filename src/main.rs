@@ -7,6 +7,8 @@ use unicode_width::UnicodeWidthChar;
 use zellij_tile::prelude::*;
 
 const PIPE_NAME: &str = "flock";
+const SYNC_REQUEST: &str = "flock-sync-request";
+const SYNC: &str = "flock-sync";
 
 const RESET: &str = "\u{1b}[0m";
 const BOLD: &str = "\u{1b}[1m";
@@ -17,16 +19,20 @@ struct State {
     model: Model,
     manifest: Option<PaneManifest>,
     tabs: Vec<TabInfo>,
+    plugin_id: u32,
+    sync_requested: bool,
 }
 
 register_plugin!(State);
 
 impl ZellijPlugin for State {
     fn load(&mut self, _configuration: BTreeMap<String, String>) {
+        self.plugin_id = get_plugin_ids().plugin_id;
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::ReadCliPipes,
             PermissionType::ChangeApplicationState,
+            PermissionType::MessageAndLaunchOtherPlugins,
         ]);
         subscribe(&[
             EventType::PaneUpdate,
@@ -38,7 +44,15 @@ impl ZellijPlugin for State {
 
     fn update(&mut self, event: Event) -> bool {
         match event {
-            Event::PaneUpdate(manifest) => self.manifest = Some(manifest),
+            Event::PaneUpdate(manifest) => {
+                self.manifest = Some(manifest);
+                // サイドバーはタブごとに別々に動くので、開く前に届いた状態を他のタブからもらう。
+                // PaneUpdate が届くのは権限が許可された後なので、ここで1回だけ送る
+                if !self.sync_requested {
+                    self.sync_requested = true;
+                    pipe_message_to_plugin(MessageToPlugin::new(SYNC_REQUEST));
+                }
+            }
             Event::TabUpdate(tabs) => self.tabs = tabs,
             // 権限の確認ダイアログに答えられるよう、許可されるまではフォーカスできるままにする
             Event::PermissionRequestResult(PermissionStatus::Granted) => set_selectable(false),
@@ -53,8 +67,21 @@ impl ZellijPlugin for State {
     }
 
     fn pipe(&mut self, message: PipeMessage) -> bool {
-        if message.name != PIPE_NAME {
-            return false;
+        match (message.name.as_str(), &message.source) {
+            (SYNC_REQUEST, PipeSource::Plugin(from)) if *from != self.plugin_id => {
+                pipe_message_to_plugin(
+                    MessageToPlugin::new(SYNC)
+                        .with_destination_plugin_id(*from)
+                        .with_payload(self.model.export()),
+                );
+                return false;
+            }
+            (SYNC, _) => {
+                self.model.import(message.payload.as_deref().unwrap_or_default());
+                return true;
+            }
+            (PIPE_NAME, _) => {}
+            _ => return false,
         }
         // CLI 側はプラグインが受け取るまで待つので、すぐに解放する
         if let PipeSource::Cli(pipe_id) = &message.source {

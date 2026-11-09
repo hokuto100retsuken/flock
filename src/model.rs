@@ -8,6 +8,27 @@ pub enum Status {
     Idle,
 }
 
+impl Status {
+    fn as_str(self) -> &'static str {
+        match self {
+            Status::Working => "working",
+            Status::Blocked => "blocked",
+            Status::Done => "done",
+            Status::Idle => "idle",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Status> {
+        match s {
+            "working" => Some(Status::Working),
+            "blocked" => Some(Status::Blocked),
+            "done" => Some(Status::Done),
+            "idle" => Some(Status::Idle),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Report {
     Working,
@@ -103,6 +124,26 @@ impl Model {
 
     pub fn set_tabs(&mut self, tabs: Vec<Tab>) {
         self.tabs = tabs;
+    }
+
+    /// 他のタブのサイドバーへ渡す形（`3=working,5=blocked`）
+    pub fn export(&self) -> String {
+        self.statuses
+            .iter()
+            .map(|(id, status)| format!("{id}={}", status.as_str()))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// 後から開いたタブのサイドバーが、開く前に届いた状態を取り込む。
+    /// 自分が受け取った状態の方が新しいので、知らないペインの分だけ足す
+    pub fn import(&mut self, exported: &str) {
+        for (id, status) in exported.split(',').filter_map(|entry| {
+            let (id, status) = entry.split_once('=')?;
+            Some((id.parse().ok()?, Status::parse(status)?))
+        }) {
+            self.statuses.entry(id).or_insert(status);
+        }
     }
 
     /// タブの位置 → ペインの作成順で並べる。状態が変わっても順番は変えない
@@ -212,6 +253,21 @@ mod tests {
             })
             .collect();
         assert_eq!(lines, vec![None, Some(3), None, Some(5)]);
+    }
+
+    #[test]
+    fn 取り込みは知らないペインの分だけ足す() {
+        let mut from = model();
+        from.apply(3, Report::Working);
+        from.apply(5, Report::Blocked);
+        let mut to = model();
+        to.apply(5, Report::Working);
+        to.import(&from.export());
+        let statuses: Vec<Status> = to.lines().iter().filter_map(|l| match l {
+            Line::Agent(row) => Some(row.status),
+            Line::Tab(_) => None,
+        }).collect();
+        assert_eq!(statuses, vec![Status::Working, Status::Working]);
     }
 
     #[test]
