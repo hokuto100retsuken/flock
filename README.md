@@ -9,18 +9,19 @@ zellij のサイドバーに、各ペインで動いているコーディング�
 - `Alt+j` / `Alt+k` で次 / 前のエージェントへ移動する（flock のセッションの中だけ。上下のペイン移動は `Alt+↓` / `Alt+↑`）
 - 右側に、フォーカスしているエージェントの指示と操作（ツールと対象のファイル・コマンド）を時刻付きで出す。行を押すと指示の全文やツールの入力・結果を開く（`q` で閉じる）。`Alt+g` で出し入れする
 
-## ビルド
+## インストール
 
-Rust のバージョンと WASM のターゲットは `rust-toolchain.toml` で決めている（rustup が自動で入れる）。
+[Releases](https://github.com/hokuto100retsuken/flock/releases) から、使う環境のバイナリを取って PATH の通った場所に置く。サイドバーのプラグインはバイナリに入っているので、ほかに要るのは [zellij](https://zellij.dev/)（0.45 以降）だけ。
 
 ```sh
-cargo build --release   # target/wasm32-wasip1/release/flock.wasm
-cargo test --target aarch64-apple-darwin
+# macOS（Apple Silicon）の例
+curl -L https://github.com/hokuto100retsuken/flock/releases/latest/download/flock-aarch64-apple-darwin.tar.gz | tar xz -C ~/.local/bin
+flock setup        # Claude Code の設定にフックを足す
 ```
 
-## 起動と操作
+ソースから入れるときは `cargo install --git https://github.com/hokuto100retsuken/flock flock`。Rust のバージョンと WASM のターゲットは `rust-toolchain.toml` で決めている（rustup が自動で入れる）。
 
-`bin/flock` を PATH の通った場所にリンクして使う。
+## 起動と操作
 
 ```sh
 flock              # 起動する。起動中なら繋ぎ直し、Ctrl+q で終了していたら前のタブを会話の続きから開き直す
@@ -29,11 +30,20 @@ flock focus N      # サイドバーの N 番のエージェントへ移動す�
 flock next|prev    # 次 / 前のエージェントへ移動する
 ```
 
-初回と権限が増えたときは、サイドバーに権限の確認が出るのでクリックしてから `y` で許可する。
+初回と権限が増えたときは、サイドバーと右側に権限の確認が出るので、それぞれクリックしてから `y` で許可する。タブの順番は zellij の `Alt+i` / `Alt+o` で変えられ、サイドバーの並びもそれに合わせて変わる。
+
+起動するときにプラグインを `~/.local/share/flock/flock.wasm` に書き出す。タブの並びとログの詳細は `~/.local/state/flock/` に置く。
+
+## 開発
+
+```sh
+cargo build --release   # target/release/flock。build.rs がプラグインを WASM にビルドして埋め込む
+cargo test
+```
 
 ## Claude Code のフック
 
-`~/.claude/settings.json` の `hooks` に、各イベントで `hooks/flock-state` を呼ぶ設定を入れる（dotfiles の `claude/settings.json` に入れてある）。zellij の外で動いているときは何もしない。
+`flock setup` が `~/.claude/settings.json` の `hooks` に、各イベントで `flock hook <状態>` を呼ぶ設定を足す（元の設定は `settings.json.bak` に残す）。zellij の外で動いているときは何もしない。
 
 | イベント | 送る状態 |
 |---|---|

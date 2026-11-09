@@ -1,0 +1,38 @@
+# v から始まるタグを push すると、各環境のバイナリを作って Release に置く
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build:
+    needs: create
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-13
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # Rust のバージョンと WASM のターゲットは rust-toolchain.toml に従って入る
+      - run: cargo build --release --locked -p flock
+      - run: tar czf "flock-${{ matrix.target }}.tar.gz" -C target/release flock
+      - run: gh release upload "$GITHUB_REF_NAME" "flock-${{ matrix.target }}.tar.gz" --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
