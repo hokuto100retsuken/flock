@@ -29,7 +29,7 @@ jobs:
             os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Rust のバージョンと WASM のターゲットは rust-toolchain.toml に従って入る
       - run: rustup target add ${{ matrix.target }}
       - run: cargo build --release --locked -p flock --target ${{ matrix.target }}
