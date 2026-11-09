@@ -2,6 +2,7 @@
 name = "flock-plugin"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 # zellij が読み込む WASM。wasm32-wasip1 向けにビルドする
 [[bin]]
