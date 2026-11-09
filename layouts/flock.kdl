@@ -1,4 +1,4 @@
-// 左に flock のサイドバーを置くレイアウト
+// 左に flock のサイドバー、右にエージェントのログを置くレイアウト
 // 使い方: zellij --layout <このファイル>
 layout {
     default_tab_template {
@@ -9,6 +9,11 @@ layout {
                 }
             }
             children
+            pane size=40 borderless=true {
+                plugin location="file:/Users/hokuto100retsuken/src/github.com/hokuto100retsuken/flock/target/wasm32-wasip1/release/flock.wasm" {
+                    mode "log"
+                }
+            }
         }
         pane size=1 borderless=true {
             plugin location="compact-bar"
@@ -23,6 +28,11 @@ layout {
                 }
             }
             pane
+            pane size=40 borderless=true {
+                plugin location="file:/Users/hokuto100retsuken/src/github.com/hokuto100retsuken/flock/target/wasm32-wasip1/release/flock.wasm" {
+                    mode "log"
+                }
+            }
         }
         pane size=1 borderless=true {
             plugin location="compact-bar"

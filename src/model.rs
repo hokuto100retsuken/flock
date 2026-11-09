@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
+
+/// ペインごとに残すログの件数
+const LOG_LIMIT: usize = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -80,6 +83,13 @@ pub struct Group {
     pub rows: Vec<Row>,
 }
 
+/// エージェントが何をしたかの1件
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub time: String,
+    pub text: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Line {
     Tab { position: usize, name: String },
@@ -89,6 +99,7 @@ pub enum Line {
 #[derive(Default)]
 pub struct Model {
     statuses: BTreeMap<u32, Status>,
+    logs: BTreeMap<u32, VecDeque<Entry>>,
     panes: Vec<Pane>,
     tabs: Vec<Tab>,
 }
@@ -98,6 +109,7 @@ impl Model {
         let status = match report {
             Report::End => {
                 self.statuses.remove(&pane_id);
+                self.logs.remove(&pane_id);
                 return;
             }
             Report::Working => Status::Working,
@@ -114,6 +126,7 @@ impl Model {
         self.panes = panes;
         self.statuses
             .retain(|id, _| self.panes.iter().any(|p| p.id == *id));
+        self.logs.retain(|id, _| self.panes.iter().any(|p| p.id == *id));
         for pane in self.panes.iter().filter(|p| p.focused) {
             if let Some(status) = self.statuses.get_mut(&pane.id) {
                 if *status == Status::Done {
@@ -127,23 +140,70 @@ impl Model {
         self.tabs = tabs;
     }
 
-    /// 他のタブのサイドバーへ渡す形（`3=working,5=blocked`）
-    pub fn export(&self) -> String {
-        self.statuses
-            .iter()
-            .map(|(id, status)| format!("{id}={}", status.as_str()))
-            .collect::<Vec<_>>()
-            .join(",")
+    /// 報告をログに残す。detail はフックが拾った中身（指示の1行目、ツールと対象など）
+    pub fn record(&mut self, pane_id: u32, report: &Report, time: &str, detail: &str) {
+        let text = match report {
+            Report::Working if !detail.is_empty() => detail.to_owned(),
+            Report::Blocked => format!("● {detail}"),
+            Report::Stop => "✓ 完了".to_owned(),
+            _ => return,
+        };
+        let log = self.logs.entry(pane_id).or_default();
+        if log.len() == LOG_LIMIT {
+            log.pop_front();
+        }
+        log.push_back(Entry {
+            time: time.to_owned(),
+            text,
+        });
     }
 
-    /// 後から開いたタブのサイドバーが、開く前に届いた状態を取り込む。
-    /// 自分が受け取った状態の方が新しいので、知らないペインの分だけ足す
+    pub fn log(&self, pane_id: u32) -> impl Iterator<Item = &Entry> {
+        self.logs.get(&pane_id).into_iter().flatten()
+    }
+
+    pub fn status(&self, pane_id: u32) -> Option<Status> {
+        self.statuses.get(&pane_id).copied()
+    }
+
+    /// 他のタブのサイドバーへ渡す形。1行に1件、タブ区切り
+    /// （`s 3 working` で状態、`l 3 12:03 Edit main.rs` でログ）
+    pub fn export(&self) -> String {
+        let statuses = self
+            .statuses
+            .iter()
+            .map(|(id, status)| format!("s\t{id}\t{}", status.as_str()));
+        let logs = self.logs.iter().flat_map(|(id, log)| {
+            log.iter()
+                .map(move |e| format!("l\t{id}\t{}\t{}", e.time, e.text))
+        });
+        statuses.chain(logs).collect::<Vec<_>>().join("\n")
+    }
+
+    /// 後から開いたタブのサイドバーが、開く前に届いた状態とログを取り込む。
+    /// 自分が受け取った分の方が新しいので、知らないペインの分だけ足す
     pub fn import(&mut self, exported: &str) {
-        for (id, status) in exported.split(',').filter_map(|entry| {
-            let (id, status) = entry.split_once('=')?;
-            Some((id.parse().ok()?, Status::parse(status)?))
-        }) {
-            self.statuses.entry(id).or_insert(status);
+        let mut logs: BTreeMap<u32, VecDeque<Entry>> = BTreeMap::new();
+        for fields in exported.lines().map(|l| l.split('\t').collect::<Vec<_>>()) {
+            match fields[..] {
+                ["s", id, status] => {
+                    if let (Ok(id), Some(status)) = (id.parse(), Status::parse(status)) {
+                        self.statuses.entry(id).or_insert(status);
+                    }
+                }
+                ["l", id, time, text] => {
+                    if let Ok(id) = id.parse() {
+                        logs.entry(id).or_default().push_back(Entry {
+                            time: time.to_owned(),
+                            text: text.to_owned(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (id, log) in logs {
+            self.logs.entry(id).or_insert(log);
         }
     }
 
@@ -330,6 +390,30 @@ mod tests {
             Line::Tab { .. } => None,
         }).collect();
         assert_eq!(statuses, vec![Status::Working, Status::Working]);
+    }
+
+    #[test]
+    fn 取り込みはログも知らないペインの分だけ足す() {
+        let mut from = model();
+        from.apply(3, Report::Working);
+        from.record(3, &Report::Working, "12:00", "Edit main.rs");
+        from.record(5, &Report::Working, "12:01", "Bash ls");
+        let mut to = model();
+        to.record(5, &Report::Stop, "12:02", "");
+        to.import(&from.export());
+        let texts = |id| to.log(id).map(|e| e.text.clone()).collect::<Vec<_>>();
+        assert_eq!(texts(3), vec!["Edit main.rs"]);
+        assert_eq!(texts(5), vec!["✓ 完了"]);
+    }
+
+    #[test]
+    fn ログは上限を超えると古いものから消える() {
+        let mut m = model();
+        for i in 0..=LOG_LIMIT {
+            m.record(3, &Report::Working, "12:00", &i.to_string());
+        }
+        assert_eq!(m.log(3).count(), LOG_LIMIT);
+        assert_eq!(m.log(3).next().unwrap().text, "1");
     }
 
     #[test]

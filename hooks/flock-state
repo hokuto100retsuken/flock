@@ -3,8 +3,17 @@
 # 使い方: flock-state working|blocked|stop|idle|end
 # zellij の外では何もしない。フックを止めないよう、送信の失敗は無視する。
 [ -n "$ZELLIJ_PANE_ID" ] || exit 0
-cat >/dev/null
-zellij pipe --name flock --args "pane=$ZELLIJ_PANE_ID,state=$1" -- "$1" >/dev/null 2>&1 </dev/null &
+# ログに出す1行。指示なら1行目、ツールなら名前と対象（ファイル名やコマンド）、許可待ちならその文言
+detail=$(jq -r '
+  def line: tostring | (split("\n")[0] // "") | gsub("\t"; " ") | .[:200];
+  (.tool_input // {}) as $in
+  | if .hook_event_name == "UserPromptSubmit" then "> " + (.prompt | line)
+    elif .hook_event_name == "PostToolUse" then
+      .tool_name + " " + (($in.file_path // $in.notebook_path | values | split("/") | last)
+        // ($in.command // $in.pattern // $in.url // $in.description // "" | line))
+    elif .hook_event_name == "Notification" then .message | line
+    else empty end' 2>/dev/null)
+zellij pipe --name flock --args "pane=$ZELLIJ_PANE_ID,state=$1" -- "$(date +%H:%M) $detail" >/dev/null 2>&1 </dev/null &
 pipe=$!
 # サイドバーが権限の確認待ちなどで受け取れないと pipe は返ってこないので、2秒で諦める。
 # 見張りの sleep が出力をつかむと、呼び出し元（Claude Code）がそれが閉じるまで待つので、出力を外す

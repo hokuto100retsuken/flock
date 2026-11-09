@@ -13,6 +13,7 @@ const NEW: &str = "flock-new";
 const NEXT: &str = "flock-next";
 const PREV: &str = "flock-prev";
 const FOCUS: &str = "flock-focus";
+const LOG_TOGGLE: &str = "flock-log-toggle";
 
 // セッションの中だけで効かせる。zellij の設定ファイルには書かない
 const KEYBINDS: &str = r#"
@@ -20,11 +21,16 @@ keybinds {
     shared_except "locked" {
         bind "Alt j" { MessagePlugin { name "flock-next"; }; }
         bind "Alt k" { MessagePlugin { name "flock-prev"; }; }
+        bind "Alt g" { MessagePlugin { name "flock-log-toggle"; }; }
     }
 }
 "#;
 
 const NEW_LABEL: &str = "＋ new";
+/// 右側のログの幅。レイアウトの size と合わせる
+const LOG_WIDTH: usize = 40;
+/// 戻したログを LOG_WIDTH まで縮めるときに、縮める回数の上限
+const FIT_TRIES: u32 = 20;
 
 const RESET: &str = "\u{1b}[0m";
 const BOLD: &str = "\u{1b}[1m";
@@ -38,6 +44,17 @@ struct State {
     plugin_id: u32,
     configuration: BTreeMap<String, String>,
     initialized: bool,
+    /// 右側のログとして動く。設定の mode "log" で決まる
+    log_view: bool,
+    hidden: bool,
+    /// ログに出しているエージェント。エージェント以外のペインに移っても出し続ける
+    shown: Option<u32>,
+    /// ログを戻した後、幅を縮める残りの回数
+    fitting: u32,
+    /// 最後に縮めたときの幅。縮めた結果が届く前に重ねて縮めないよう、幅が変わるまで待つ
+    fitted_from: Option<usize>,
+    /// 一度隠して戻した
+    restored: bool,
 }
 
 register_plugin!(State);
@@ -45,6 +62,7 @@ register_plugin!(State);
 impl ZellijPlugin for State {
     fn load(&mut self, configuration: BTreeMap<String, String>) {
         self.plugin_id = get_plugin_ids().plugin_id;
+        self.log_view = configuration.get("mode").map(String::as_str) == Some("log");
         self.configuration = configuration;
         request_permission(&[
             PermissionType::ReadApplicationState,
@@ -65,18 +83,21 @@ impl ZellijPlugin for State {
         match event {
             Event::PaneUpdate(manifest) => {
                 self.manifest = Some(manifest);
+                self.fit();
                 // PaneUpdate が届くのは権限が許可された後なので、権限の要る初期化はここで1回だけする
                 if !self.initialized {
                     self.initialized = true;
                     // サイドバーはタブごとに別々に動くので、開く前に届いた状態を他のタブからもらう
                     pipe_message_to_plugin(MessageToPlugin::new(SYNC_REQUEST));
-                    reconfigure(KEYBINDS.to_owned(), false);
+                    if !self.log_view {
+                        reconfigure(KEYBINDS.to_owned(), false);
+                    }
                 }
             }
             Event::TabUpdate(tabs) => self.tabs = tabs,
             // 権限の確認ダイアログに答えられるよう、許可されるまではフォーカスできるままにする
             Event::PermissionRequestResult(PermissionStatus::Granted) => set_selectable(false),
-            Event::Mouse(Mouse::LeftClick(line, _)) => {
+            Event::Mouse(Mouse::LeftClick(line, _)) if !self.log_view => {
                 self.focus_line(line);
                 return false;
             }
@@ -100,6 +121,21 @@ impl ZellijPlugin for State {
                 self.model.import(message.payload.as_deref().unwrap_or_default());
                 return true;
             }
+            (LOG_TOGGLE, _) => {
+                // どのタブでも同じ見え方にするので、すべてのタブのログが切り替わる
+                if self.log_view {
+                    self.hidden = !self.hidden;
+                    if self.hidden {
+                        hide_self();
+                    } else {
+                        show_self(false);
+                        self.fitting = FIT_TRIES;
+                        self.fitted_from = None;
+                        self.restored = true;
+                    }
+                }
+                return false;
+            }
             (PIPE_NAME | NEW | NEXT | PREV | FOCUS, _) => {}
             _ => return false,
         }
@@ -112,6 +148,9 @@ impl ZellijPlugin for State {
             }
         }
         if message.name != PIPE_NAME {
+            if self.log_view {
+                return false;
+            }
             // 操作はすべてのタブのサイドバーに届く。隠れているタブのサイドバーには
             // どのタブが表示中かの更新が届かないので、フォーカス中のペインをその場で問い合わせ、
             // それと同じタブにいるサイドバーだけが動く
@@ -126,6 +165,10 @@ impl ZellijPlugin for State {
         let report = message.args.get("state").and_then(|v| Report::parse(v));
         match (pane_id, report) {
             (Some(pane_id), Some(report)) => {
+                // 中身は「12:03 Edit main.rs」の形。時刻はフック側で付ける
+                let payload = message.payload.as_deref().unwrap_or_default();
+                let (time, detail) = payload.split_once(' ').unwrap_or((payload, ""));
+                self.model.record(pane_id, &report, time, detail);
                 self.model.apply(pane_id, report);
                 true
             }
@@ -133,7 +176,10 @@ impl ZellijPlugin for State {
         }
     }
 
-    fn render(&mut self, _rows: usize, cols: usize) {
+    fn render(&mut self, rows: usize, cols: usize) {
+        if self.log_view {
+            return self.render_log(rows, cols);
+        }
         let mut number = 0;
         for line in self.model.lines() {
             match line {
@@ -153,6 +199,82 @@ impl ZellijPlugin for State {
 }
 
 impl State {
+    /// 右側のログ。このタブでフォーカスしているエージェントの指示と操作を、新しいものを下に出す
+    fn render_log(&mut self, rows: usize, cols: usize) {
+        // 隠して戻したペインは枠なしの指定が外れて zellij が区切り線を引くので、自分では引かない
+        let bar = if self.restored { String::new() } else { format!("{DIM}│{RESET}") };
+        let width = cols.saturating_sub(2);
+        let mut lines = Vec::new();
+        if let Some((pane_id, title)) = self.log_target() {
+            let (icon, color) = self
+                .model
+                .status(pane_id)
+                .map(status_style)
+                .unwrap_or(("○", ""));
+            let title = truncate(&title, width.saturating_sub(2));
+            lines.push(format!("{color}{icon}{RESET} {BOLD}{title}{RESET}"));
+            lines.push(String::new());
+            let entries: Vec<_> = self.model.log(pane_id).collect();
+            let room = rows.saturating_sub(lines.len());
+            for entry in &entries[entries.len().saturating_sub(room)..] {
+                let text = truncate(&entry.text, width.saturating_sub(entry.time.len() + 1));
+                // 指示は操作と見分けやすいよう太字にする
+                let style = if text.starts_with("> ") { BOLD } else { "" };
+                lines.push(format!("{DIM}{}{RESET} {style}{text}{RESET}", entry.time));
+            }
+        }
+        // 区切り線を下まで引くため、空いた行にも出す。最後の行で改行すると1行ずれる
+        lines.resize(rows, String::new());
+        let lines: Vec<String> = lines.iter().map(|l| format!("{bar} {l}")).collect();
+        print!("{}", lines.join("\n"));
+    }
+
+    /// 隠したペインを戻すと、zellij は隣のペインを半分に割った幅で戻すので、元の幅まで縮める
+    fn fit(&mut self) {
+        if self.fitting == 0 {
+            return;
+        }
+        let Some((_, pane)) = self.own_pane() else {
+            return;
+        };
+        if pane.is_suppressed {
+            return;
+        }
+        if pane.pane_columns <= LOG_WIDTH {
+            self.fitting = 0;
+            return;
+        }
+        if self.fitted_from == Some(pane.pane_columns) {
+            return;
+        }
+        self.fitted_from = Some(pane.pane_columns);
+        self.fitting -= 1;
+        resize_pane_with_id(
+            ResizeStrategy::new(Resize::Decrease, Some(Direction::Left)),
+            PaneId::Plugin(self.plugin_id),
+        );
+    }
+
+    fn log_target(&mut self) -> Option<(u32, String)> {
+        let (tab, _) = self.own_pane()?;
+        let agents: Vec<&PaneInfo> = self
+            .manifest
+            .as_ref()?
+            .panes
+            .get(&tab)?
+            .iter()
+            .filter(|p| !p.is_plugin && self.model.status(p.id).is_some())
+            .collect();
+        let shown = match agents.iter().find(|p| p.is_focused) {
+            Some(focused) => Some(focused.id),
+            None if self.shown.is_some_and(|id| agents.iter().any(|p| p.id == id)) => self.shown,
+            None => agents.first().map(|p| p.id),
+        };
+        let title = agents.iter().find(|p| Some(p.id) == shown)?.title.clone();
+        self.shown = shown;
+        shown.map(|id| (id, title))
+    }
+
     fn focus_line(&self, line: isize) {
         let Ok(index) = usize::try_from(line) else {
             return;
@@ -240,6 +362,9 @@ impl State {
             }}
             pane command="sh" focus=true {{
                 args "-c" {command}
+            }}
+            pane size={LOG_WIDTH} borderless=true {{
+                plugin location={url} {{ {config}mode "log"; }}
             }}
         }}
         pane size=1 borderless=true {{
