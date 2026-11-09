@@ -31,7 +31,9 @@ if [ -n "$detail" ]; then
     find "$dir" -name '*.txt' -mtime +1 -delete 2>/dev/null
 fi
 # 中身は「時刻 タブ 詳細のファイル タブ ログの1行」
-zellij pipe --name flock --args "pane=$ZELLIJ_PANE_ID,state=$1" -- "$(printf '%s\t%s\t%s' "$(date +%H:%M)" "$file" "$detail")" >/dev/null 2>&1 </dev/null &
+# 会話の ID。Ctrl+q で終了した後に flock を開き直すと、この会話の続きから起動する
+session=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
+zellij pipe --name flock --args "pane=$ZELLIJ_PANE_ID,state=$1${session:+,session=$session}" -- "$(printf '%s\t%s\t%s' "$(date +%H:%M)" "$file" "$detail")" >/dev/null 2>&1 </dev/null &
 pipe=$!
 # サイドバーが権限の確認待ちなどで受け取れないと pipe は返ってこないので、2秒で諦める。
 # 見張りの sleep が出力をつかむと、呼び出し元（Claude Code）がそれが閉じるまで待つので、出力を外す

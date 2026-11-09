@@ -1,6 +1,6 @@
 #!/bin/sh
 # flock の zellij セッションを起動・操作する。
-#   flock              起動する。起動中なら繋ぎ直す
+#   flock              起動する。起動中なら繋ぎ直し、終了していたら前のタブを会話の続きから開き直す
 #   flock new [DIR] [--name NAME]
 #                      新しいタブで Claude Code を起動する（DIR の既定は今のフォルダ、NAME の既定はフォルダ名）
 #   flock focus N      サイドバーの N 番のエージェントへ移動する
@@ -19,6 +19,29 @@ send() {
     kill $! 2>/dev/null || true
 }
 
+# 起動に使うレイアウト。サイドバーが書き出したタブの並びがあれば、そのタブを並べたものを作る
+layout() {
+    tabs=${XDG_STATE_HOME:-$HOME/.local/state}/flock/$session.tabs
+    if [ ! -s "$tabs" ]; then
+        echo "$root/layouts/flock.kdl"
+        return
+    fi
+    out=${TMPDIR:-/tmp}/flock-$session.kdl
+    # flock.kdl の tab name="main" より前（テンプレート）はそのまま使い、タブだけを差し替える
+    sed '/^    tab name="main"/,$d' "$root/layouts/flock.kdl" >"$out"
+    # 1行に1タブ「名前 タブ フォルダ タブ 会話の ID」
+    awk -F '\t' '
+        function q(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return "\"" s "\"" }
+        {
+            printf "    tab name=%s cwd=%s%s {\n", q($1), q($2), (NR == 1 ? " focus=true" : "")
+            if ($3 != "") printf "        pane command=\"claude\" {\n            args \"--resume\" %s\n        }\n", q($3)
+            else print "        pane"
+            print "    }"
+        }
+        END { print "}" }' "$tabs" >>"$out"
+    echo "$out"
+}
+
 case ${1:-} in
 "")
     if [ -n "${ZELLIJ:-}" ]; then
@@ -31,7 +54,7 @@ case ${1:-} in
     # 終了済みのセッションを復元すると、そのときのレイアウトと設定のまま戻ってしまうので作り直す
     exited) zellij delete-session "$session" >/dev/null ;;
     esac
-    exec zellij --session "$session" --new-session-with-layout "$root/layouts/flock.kdl"
+    exec zellij --session "$session" --new-session-with-layout "$(layout)"
     ;;
 new)
     shift

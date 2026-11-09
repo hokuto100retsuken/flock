@@ -23,7 +23,7 @@ cargo test --target aarch64-apple-darwin
 `bin/flock` を PATH の通った場所にリンクして使う。
 
 ```sh
-flock              # 起動する。起動中なら繋ぎ直す
+flock              # 起動する。起動中なら繋ぎ直し、Ctrl+q で終了していたら前のタブを会話の続きから開き直す
 flock new [DIR] [--name NAME]  # 新しいタブで Claude Code を起動する（DIR の既定は今のフォルダ、NAME の既定はフォルダ名）
 flock focus N      # サイドバーの N 番のエージェントへ移動する
 flock next|prev    # 次 / 前のエージェントへ移動する

@@ -17,6 +17,9 @@ const LOG_TOGGLE: &str = "flock-log-toggle";
 /// 詳細を開いたペインの目印
 const DETAIL: &str = "flock-detail";
 
+/// タブの並びを書き出す。$1 がセッション名、$2 が中身。bin/flock が作り直すときに読む
+const SAVE_TABS: &str = r#"dir=${XDG_STATE_HOME:-$HOME/.local/state}/flock && mkdir -p "$dir" && printf '%s\n' "$2" >"$dir/$1.tabs""#;
+
 // セッションの中だけで効かせる。zellij の設定ファイルには書かない
 const KEYBINDS: &str = r#"
 keybinds {
@@ -59,6 +62,9 @@ struct State {
     restored: bool,
     /// ログの各行を押したときに開く詳細のファイル
     row_files: Vec<String>,
+    session_name: Option<String>,
+    /// 最後に書き出したタブの並び。変わったときだけ書き出す
+    saved_tabs: String,
 }
 
 register_plugin!(State);
@@ -82,6 +88,7 @@ impl ZellijPlugin for State {
             EventType::PermissionRequestResult,
             EventType::Mouse,
             EventType::CommandPaneExited,
+            EventType::ModeUpdate,
         ]);
     }
 
@@ -101,6 +108,10 @@ impl ZellijPlugin for State {
                 }
             }
             Event::TabUpdate(tabs) => self.tabs = tabs,
+            Event::ModeUpdate(mode) => {
+                self.session_name = mode.session_name;
+                return false;
+            }
             // 権限の確認ダイアログに答えられるよう、許可されるまではフォーカスできるままにする
             Event::PermissionRequestResult(PermissionStatus::Granted) => set_selectable(false),
             Event::Mouse(Mouse::LeftClick(line, _)) if self.log_view => {
@@ -177,6 +188,9 @@ impl ZellijPlugin for State {
             return false;
         }
         let pane_id = message.args.get("pane").and_then(|v| v.parse().ok());
+        if let (Some(pane_id), Some(session)) = (pane_id, message.args.get("session")) {
+            self.model.set_session(pane_id, session);
+        }
         let report = message.args.get("state").and_then(|v| Report::parse(v));
         match (pane_id, report) {
             (Some(pane_id), Some(report)) => {
@@ -187,6 +201,7 @@ impl ZellijPlugin for State {
                 let (time, file, detail) = (field(), field(), field());
                 self.model.record(pane_id, &report, time, file, detail);
                 self.model.apply(pane_id, report);
+                self.save_tabs();
                 true
             }
             _ => false,
@@ -458,6 +473,47 @@ impl State {
                 })
                 .collect(),
         );
+        self.save_tabs();
+    }
+
+    /// Ctrl+q で終了した後に作り直せるよう、タブの名前・フォルダ・会話の ID を1行に1タブで書き出す。
+    /// 隠れているタブのサイドバーにはタブの更新が届かず古い並びのままなので、表示中のタブのサイドバーだけが書く
+    fn save_tabs(&mut self) {
+        if self.log_view {
+            return;
+        }
+        let Ok((focused_tab, _)) = get_focused_pane_info() else {
+            return;
+        };
+        if self.own_pane().map(|(tab, _)| tab) != Some(focused_tab) {
+            return;
+        }
+        let Some(session_name) = self.session_name.clone() else {
+            return;
+        };
+        let tabs: Vec<String> = self
+            .model
+            .saved_tabs()
+            .into_iter()
+            .filter_map(|tab| {
+                let cwd = get_pane_cwd(PaneId::Terminal(tab.pane_id)).ok()?;
+                Some(format!(
+                    "{}\t{}\t{}",
+                    tab.name,
+                    cwd.display(),
+                    tab.session.unwrap_or_default()
+                ))
+            })
+            .collect();
+        let tabs = tabs.join("\n");
+        if tabs.is_empty() || tabs == self.saved_tabs {
+            return;
+        }
+        run_command(
+            &["sh", "-c", SAVE_TABS, "sh", &session_name, &tabs],
+            BTreeMap::new(),
+        );
+        self.saved_tabs = tabs;
     }
 }
 

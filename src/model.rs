@@ -92,6 +92,15 @@ pub struct Entry {
     pub text: String,
 }
 
+/// 作り直したセッションで戻すタブ1つ分
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SavedTab {
+    pub name: String,
+    /// フォルダを問い合わせるペイン。会話のあるペインがあればそれ、なければ最初のペイン
+    pub pane_id: u32,
+    pub session: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Line {
     Tab { position: usize, name: String },
@@ -102,6 +111,8 @@ pub enum Line {
 pub struct Model {
     statuses: BTreeMap<u32, Status>,
     logs: BTreeMap<u32, VecDeque<Entry>>,
+    /// ペインで動いている Claude Code の会話の ID
+    sessions: BTreeMap<u32, String>,
     panes: Vec<Pane>,
     tabs: Vec<Tab>,
 }
@@ -112,6 +123,7 @@ impl Model {
             Report::End => {
                 self.statuses.remove(&pane_id);
                 self.logs.remove(&pane_id);
+                self.sessions.remove(&pane_id);
                 return;
             }
             Report::Working => Status::Working,
@@ -129,6 +141,8 @@ impl Model {
         self.statuses
             .retain(|id, _| self.panes.iter().any(|p| p.id == *id));
         self.logs.retain(|id, _| self.panes.iter().any(|p| p.id == *id));
+        self.sessions
+            .retain(|id, _| self.panes.iter().any(|p| p.id == *id));
         for pane in self.panes.iter().filter(|p| p.focused) {
             if let Some(status) = self.statuses.get_mut(&pane.id) {
                 if *status == Status::Done {
@@ -165,22 +179,55 @@ impl Model {
         self.logs.get(&pane_id).into_iter().flatten()
     }
 
+    pub fn set_session(&mut self, pane_id: u32, session: &str) {
+        self.sessions.insert(pane_id, session.to_owned());
+    }
+
+    /// タブの位置順に、作り直したときに戻すタブ
+    pub fn saved_tabs(&self) -> Vec<SavedTab> {
+        let mut tabs = self.tabs.clone();
+        tabs.sort_by_key(|t| t.position);
+        tabs.into_iter()
+            .filter_map(|tab| {
+                let mut panes: Vec<&Pane> = self
+                    .panes
+                    .iter()
+                    .filter(|p| p.tab_position == tab.position)
+                    .collect();
+                panes.sort_by_key(|p| p.id);
+                let pane = panes
+                    .iter()
+                    .find(|p| self.sessions.contains_key(&p.id))
+                    .or(panes.first())?;
+                Some(SavedTab {
+                    name: tab.name,
+                    pane_id: pane.id,
+                    session: self.sessions.get(&pane.id).cloned(),
+                })
+            })
+            .collect()
+    }
+
     pub fn status(&self, pane_id: u32) -> Option<Status> {
         self.statuses.get(&pane_id).copied()
     }
 
     /// 他のタブのサイドバーへ渡す形。1行に1件、タブ区切り
-    /// （`s 3 working` で状態、`l 3 12:03 <詳細のファイル> Edit main.rs` でログ）
+    /// （`s 3 working` で状態、`c 3 <会話の ID>` で会話、`l 3 12:03 <詳細のファイル> Edit main.rs` でログ）
     pub fn export(&self) -> String {
         let statuses = self
             .statuses
             .iter()
             .map(|(id, status)| format!("s\t{id}\t{}", status.as_str()));
+        let sessions = self
+            .sessions
+            .iter()
+            .map(|(id, session)| format!("c\t{id}\t{session}"));
         let logs = self.logs.iter().flat_map(|(id, log)| {
             log.iter()
                 .map(move |e| format!("l\t{id}\t{}\t{}\t{}", e.time, e.file, e.text))
         });
-        statuses.chain(logs).collect::<Vec<_>>().join("\n")
+        statuses.chain(sessions).chain(logs).collect::<Vec<_>>().join("\n")
     }
 
     /// 後から開いたタブのサイドバーが、開く前に届いた状態とログを取り込む。
@@ -192,6 +239,11 @@ impl Model {
                 ["s", id, status] => {
                     if let (Ok(id), Some(status)) = (id.parse(), Status::parse(status)) {
                         self.statuses.entry(id).or_insert(status);
+                    }
+                }
+                ["c", id, session] => {
+                    if let Ok(id) = id.parse() {
+                        self.sessions.entry(id).or_insert_with(|| session.to_owned());
                     }
                 }
                 ["l", id, time, file, text] => {
@@ -397,17 +449,19 @@ mod tests {
     }
 
     #[test]
-    fn 取り込みはログも知らないペインの分だけ足す() {
+    fn 取り込みはログと会話も知らないペインの分だけ足す() {
         let mut from = model();
         from.apply(3, Report::Working);
         from.record(3, &Report::Working, "12:00", "/tmp/a.txt", "Edit main.rs");
         from.record(5, &Report::Working, "12:01", "", "Bash ls");
+        from.set_session(3, "abc");
         let mut to = model();
         to.record(5, &Report::Stop, "12:02", "", "");
         to.import(&from.export());
         let texts = |id| to.log(id).map(|e| e.text.clone()).collect::<Vec<_>>();
         assert_eq!(texts(3), vec!["Edit main.rs"]);
         assert_eq!(to.log(3).next().unwrap().file, "/tmp/a.txt");
+        assert_eq!(to.saved_tabs()[0].session.as_deref(), Some("abc"));
         assert_eq!(texts(5), vec!["✓ 完了"]);
     }
 
@@ -419,6 +473,22 @@ mod tests {
         }
         assert_eq!(m.log(3).count(), LOG_LIMIT);
         assert_eq!(m.log(3).next().unwrap().text, "1");
+    }
+
+    #[test]
+    fn 戻すタブは会話のあるペインを選び_なければ最初のペイン() {
+        let mut m = model();
+        m.set_session(3, "abc");
+        let tabs = m.saved_tabs();
+        assert_eq!(
+            tabs,
+            vec![
+                SavedTab { name: "a".into(), pane_id: 3, session: Some("abc".into()) },
+                SavedTab { name: "b".into(), pane_id: 5, session: None },
+            ]
+        );
+        m.apply(3, Report::End);
+        assert_eq!(m.saved_tabs()[0].pane_id, 1);
     }
 
     #[test]
