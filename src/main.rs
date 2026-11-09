@@ -417,7 +417,7 @@ impl State {
             pane size=32 borderless=true {{
                 plugin location={url} {{ {config}}}
             }}
-            pane command="sh" focus=true {{
+            pane command="sh" focus=true close_on_exit=true {{
                 args "-c" {command}
             }}
             pane size={LOG_WIDTH} borderless=true {{

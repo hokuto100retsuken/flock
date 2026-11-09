@@ -34,7 +34,7 @@ layout() {
         function q(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return "\"" s "\"" }
         {
             printf "    tab name=%s cwd=%s%s {\n", q($1), q($2), (NR == 1 ? " focus=true" : "")
-            if ($3 != "") printf "        pane command=\"claude\" {\n            args \"--resume\" %s\n        }\n", q($3)
+            if ($3 != "") printf "        pane command=\"claude\" close_on_exit=true {\n            args \"--resume\" %s\n        }\n", q($3)
             else print "        pane"
             print "    }"
         }
