@@ -24,15 +24,16 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       # Rust のバージョンと WASM のターゲットは rust-toolchain.toml に従って入る
-      - run: cargo build --release --locked -p flock
-      - run: tar czf "flock-${{ matrix.target }}.tar.gz" -C target/release flock
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo build --release --locked -p flock --target ${{ matrix.target }}
+      - run: tar czf "flock-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" flock
       - run: gh release upload "$GITHUB_REF_NAME" "flock-${{ matrix.target }}.tar.gz" --repo "$GITHUB_REPOSITORY"
         env:
           GH_TOKEN: ${{ github.token }}
