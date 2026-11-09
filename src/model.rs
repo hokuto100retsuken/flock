@@ -58,6 +58,12 @@ pub struct Group {
     pub rows: Vec<Row>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Line {
+    Tab(String),
+    Agent(Row),
+}
+
 #[derive(Default)]
 pub struct Model {
     statuses: BTreeMap<u32, Status>,
@@ -129,6 +135,17 @@ impl Model {
             .collect()
     }
 
+    /// サイドバーの1行ずつ。描画とクリック位置の判定で同じ並びを使う
+    pub fn lines(&self) -> Vec<Line> {
+        self.groups()
+            .into_iter()
+            .flat_map(|group| {
+                std::iter::once(Line::Tab(group.tab_name))
+                    .chain(group.rows.into_iter().map(Line::Agent))
+            })
+            .collect()
+    }
+
     fn is_focused(&self, pane_id: u32) -> bool {
         self.panes.iter().any(|p| p.id == pane_id && p.focused)
     }
@@ -179,6 +196,22 @@ mod tests {
         m.apply(3, Report::Working);
         assert_eq!(ids(&m), vec![3]);
         assert_eq!(m.groups()[0].tab_name, "a");
+    }
+
+    #[test]
+    fn 行はタブ見出しの下にそのタブのエージェントが続く() {
+        let mut m = model();
+        m.apply(5, Report::Working);
+        m.apply(3, Report::Working);
+        let lines: Vec<Option<u32>> = m
+            .lines()
+            .iter()
+            .map(|l| match l {
+                Line::Tab(_) => None,
+                Line::Agent(row) => Some(row.pane_id),
+            })
+            .collect();
+        assert_eq!(lines, vec![None, Some(3), None, Some(5)]);
     }
 
     #[test]

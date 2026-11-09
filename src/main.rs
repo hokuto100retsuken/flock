@@ -2,7 +2,7 @@ mod model;
 
 use std::collections::BTreeMap;
 
-use model::{Model, Pane, Report, Status, Tab};
+use model::{Line, Model, Pane, Report, Status, Tab};
 use unicode_width::UnicodeWidthChar;
 use zellij_tile::prelude::*;
 
@@ -26,11 +26,13 @@ impl ZellijPlugin for State {
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::ReadCliPipes,
+            PermissionType::ChangeApplicationState,
         ]);
         subscribe(&[
             EventType::PaneUpdate,
             EventType::TabUpdate,
             EventType::PermissionRequestResult,
+            EventType::Mouse,
         ]);
     }
 
@@ -40,6 +42,10 @@ impl ZellijPlugin for State {
             Event::TabUpdate(tabs) => self.tabs = tabs,
             // 権限の確認ダイアログに答えられるよう、許可されるまではフォーカスできるままにする
             Event::PermissionRequestResult(PermissionStatus::Granted) => set_selectable(false),
+            Event::Mouse(Mouse::LeftClick(line, _)) => {
+                self.focus_line(line);
+                return false;
+            }
             _ => return false,
         }
         self.sync();
@@ -66,18 +72,29 @@ impl ZellijPlugin for State {
     }
 
     fn render(&mut self, _rows: usize, cols: usize) {
-        for group in self.model.groups() {
-            println!("{BOLD}{}{RESET}", truncate(&group.tab_name, cols));
-            for row in group.rows {
-                let (icon, color) = status_style(row.status);
-                let title = truncate(&row.title, cols.saturating_sub(4));
-                println!(" {color}{icon}{RESET} {DIM}{title}{RESET}");
+        for line in self.model.lines() {
+            match line {
+                Line::Tab(name) => println!("{BOLD}{}{RESET}", truncate(&name, cols)),
+                Line::Agent(row) => {
+                    let (icon, color) = status_style(row.status);
+                    let title = truncate(&row.title, cols.saturating_sub(4));
+                    println!(" {color}{icon}{RESET} {DIM}{title}{RESET}");
+                }
             }
         }
     }
 }
 
 impl State {
+    fn focus_line(&self, line: isize) {
+        let Ok(index) = usize::try_from(line) else {
+            return;
+        };
+        if let Some(Line::Agent(row)) = self.model.lines().get(index) {
+            focus_terminal_pane(row.pane_id, false, false);
+        }
+    }
+
     fn sync(&mut self) {
         let active_tab = self.tabs.iter().find(|t| t.active).map(|t| t.position);
         let panes = self
