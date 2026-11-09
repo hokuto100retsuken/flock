@@ -9,7 +9,7 @@ pub enum Status {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Event {
+pub enum Report {
     Working,
     Blocked,
     Stop,
@@ -17,14 +17,14 @@ pub enum Event {
     End,
 }
 
-impl Event {
-    pub fn parse(s: &str) -> Option<Event> {
+impl Report {
+    pub fn parse(s: &str) -> Option<Report> {
         match s {
-            "working" => Some(Event::Working),
-            "blocked" => Some(Event::Blocked),
-            "stop" => Some(Event::Stop),
-            "idle" => Some(Event::Idle),
-            "end" => Some(Event::End),
+            "working" => Some(Report::Working),
+            "blocked" => Some(Report::Blocked),
+            "stop" => Some(Report::Stop),
+            "idle" => Some(Report::Idle),
+            "end" => Some(Report::End),
             _ => None,
         }
     }
@@ -66,18 +66,18 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn apply(&mut self, pane_id: u32, event: Event) {
-        let status = match event {
-            Event::End => {
+    pub fn apply(&mut self, pane_id: u32, report: Report) {
+        let status = match report {
+            Report::End => {
                 self.statuses.remove(&pane_id);
                 return;
             }
-            Event::Working => Status::Working,
-            Event::Blocked => Status::Blocked,
-            Event::Idle => Status::Idle,
+            Report::Working => Status::Working,
+            Report::Blocked => Status::Blocked,
+            Report::Idle => Status::Idle,
             // 見ている最中に終わったものは「見ていない間に終わった」にしない
-            Event::Stop if self.is_focused(pane_id) => Status::Idle,
-            Event::Stop => Status::Done,
+            Report::Stop if self.is_focused(pane_id) => Status::Idle,
+            Report::Stop => Status::Done,
         };
         self.statuses.insert(pane_id, status);
     }
@@ -165,18 +165,18 @@ mod tests {
     fn 状態が変わっても並びは変わらない() {
         let mut m = model();
         for id in [5, 3, 1] {
-            m.apply(id, Event::Working);
+            m.apply(id, Report::Working);
         }
         assert_eq!(ids(&m), vec![1, 3, 5]);
-        m.apply(5, Event::Blocked);
-        m.apply(3, Event::Stop);
+        m.apply(5, Report::Blocked);
+        m.apply(3, Report::Stop);
         assert_eq!(ids(&m), vec![1, 3, 5]);
     }
 
     #[test]
     fn 状態を報告していないペインは出さない() {
         let mut m = model();
-        m.apply(3, Event::Working);
+        m.apply(3, Report::Working);
         assert_eq!(ids(&m), vec![3]);
         assert_eq!(m.groups()[0].tab_name, "a");
     }
@@ -184,8 +184,8 @@ mod tests {
     #[test]
     fn 見ていないペインの完了はdone_見ているペインはidle() {
         let mut m = model();
-        m.apply(1, Event::Stop);
-        m.apply(3, Event::Stop);
+        m.apply(1, Report::Stop);
+        m.apply(3, Report::Stop);
         let rows = &m.groups()[0].rows;
         assert_eq!(rows[0].status, Status::Idle);
         assert_eq!(rows[1].status, Status::Done);
@@ -194,18 +194,25 @@ mod tests {
     #[test]
     fn doneはフォーカスするとidleになる() {
         let mut m = model();
-        m.apply(3, Event::Stop);
+        m.apply(3, Report::Stop);
         m.set_panes(vec![pane(5, 1, false), pane(3, 0, true), pane(1, 0, false)]);
         assert_eq!(m.groups()[0].rows[0].status, Status::Idle);
     }
 
     #[test]
-    fn 閉じたペインとendは一覧から消える() {
+    fn endを受けたペインは一覧から消える() {
         let mut m = model();
-        m.apply(1, Event::Working);
-        m.apply(3, Event::Working);
-        m.apply(5, Event::Working);
-        m.apply(1, Event::End);
+        m.apply(1, Report::Working);
+        m.apply(3, Report::Working);
+        m.apply(1, Report::End);
+        assert_eq!(ids(&m), vec![3]);
+    }
+
+    #[test]
+    fn 閉じたペインは一覧から消える() {
+        let mut m = model();
+        m.apply(1, Report::Working);
+        m.apply(3, Report::Working);
         m.set_panes(vec![pane(3, 0, true)]);
         assert_eq!(ids(&m), vec![3]);
     }

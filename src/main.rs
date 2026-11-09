@@ -2,7 +2,8 @@ mod model;
 
 use std::collections::BTreeMap;
 
-use model::{Event as AgentEvent, Model, Pane, Status, Tab};
+use model::{Model, Pane, Report, Status, Tab};
+use unicode_width::UnicodeWidthChar;
 use zellij_tile::prelude::*;
 
 const PIPE_NAME: &str = "flock";
@@ -54,10 +55,10 @@ impl ZellijPlugin for State {
             unblock_cli_pipe_input(pipe_id);
         }
         let pane_id = message.args.get("pane").and_then(|v| v.parse().ok());
-        let event = message.args.get("state").and_then(|v| AgentEvent::parse(v));
-        match (pane_id, event) {
-            (Some(pane_id), Some(event)) => {
-                self.model.apply(pane_id, event);
+        let report = message.args.get("state").and_then(|v| Report::parse(v));
+        match (pane_id, report) {
+            (Some(pane_id), Some(report)) => {
+                self.model.apply(pane_id, report);
                 true
             }
             _ => false,
@@ -117,12 +118,12 @@ fn status_style(status: Status) -> (&'static str, &'static str) {
     }
 }
 
-/// 全角を2桁として数え、表示幅に収まるよう切り詰める
+/// 表示幅に収まるよう切り詰める
 fn truncate(s: &str, width: usize) -> String {
     let mut out = String::new();
     let mut used = 0;
     for c in s.chars() {
-        let w = if (c as u32) < 0x1100 { 1 } else { 2 };
+        let w = c.width().unwrap_or(0);
         if used + w > width {
             break;
         }
