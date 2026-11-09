@@ -12,6 +12,18 @@ layout {
             plugin location="compact-bar"
         }
     }
+    // default_tab_template だけだと、後から開いたタブの children がペインにならず空のタブになる
+    new_tab_template {
+        pane split_direction="vertical" {
+            pane size=32 borderless=true {
+                plugin location="file:/Users/hokuto100retsuken/src/github.com/hokuto100retsuken/flock/target/wasm32-wasip1/release/flock.wasm"
+            }
+            pane
+        }
+        pane size=1 borderless=true {
+            plugin location="compact-bar"
+        }
+    }
     tab name="main" {
         pane
     }
