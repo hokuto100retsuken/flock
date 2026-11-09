@@ -9,6 +9,22 @@ use zellij_tile::prelude::*;
 const PIPE_NAME: &str = "flock";
 const SYNC_REQUEST: &str = "flock-sync-request";
 const SYNC: &str = "flock-sync";
+const NEW: &str = "flock-new";
+const NEXT: &str = "flock-next";
+const PREV: &str = "flock-prev";
+const FOCUS: &str = "flock-focus";
+
+// セッションの中だけで効かせる。zellij の設定ファイルには書かない
+const KEYBINDS: &str = r#"
+keybinds {
+    shared_except "locked" {
+        bind "Alt j" { MessagePlugin { name "flock-next"; }; }
+        bind "Alt k" { MessagePlugin { name "flock-prev"; }; }
+    }
+}
+"#;
+
+const NEW_LABEL: &str = "＋ new";
 
 const RESET: &str = "\u{1b}[0m";
 const BOLD: &str = "\u{1b}[1m";
@@ -20,19 +36,22 @@ struct State {
     manifest: Option<PaneManifest>,
     tabs: Vec<TabInfo>,
     plugin_id: u32,
-    sync_requested: bool,
+    configuration: BTreeMap<String, String>,
+    initialized: bool,
 }
 
 register_plugin!(State);
 
 impl ZellijPlugin for State {
-    fn load(&mut self, _configuration: BTreeMap<String, String>) {
+    fn load(&mut self, configuration: BTreeMap<String, String>) {
         self.plugin_id = get_plugin_ids().plugin_id;
+        self.configuration = configuration;
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::ReadCliPipes,
             PermissionType::ChangeApplicationState,
             PermissionType::MessageAndLaunchOtherPlugins,
+            PermissionType::Reconfigure,
         ]);
         subscribe(&[
             EventType::PaneUpdate,
@@ -46,11 +65,12 @@ impl ZellijPlugin for State {
         match event {
             Event::PaneUpdate(manifest) => {
                 self.manifest = Some(manifest);
-                // サイドバーはタブごとに別々に動くので、開く前に届いた状態を他のタブからもらう。
-                // PaneUpdate が届くのは権限が許可された後なので、ここで1回だけ送る
-                if !self.sync_requested {
-                    self.sync_requested = true;
+                // PaneUpdate が届くのは権限が許可された後なので、権限の要る初期化はここで1回だけする
+                if !self.initialized {
+                    self.initialized = true;
+                    // サイドバーはタブごとに別々に動くので、開く前に届いた状態を他のタブからもらう
                     pipe_message_to_plugin(MessageToPlugin::new(SYNC_REQUEST));
+                    reconfigure(KEYBINDS.to_owned(), false);
                 }
             }
             Event::TabUpdate(tabs) => self.tabs = tabs,
@@ -80,12 +100,27 @@ impl ZellijPlugin for State {
                 self.model.import(message.payload.as_deref().unwrap_or_default());
                 return true;
             }
-            (PIPE_NAME, _) => {}
+            (PIPE_NAME | NEW | NEXT | PREV | FOCUS, _) => {}
             _ => return false,
         }
         // CLI 側はプラグインが受け取るまで待つので、すぐに解放する
         if let PipeSource::Cli(pipe_id) = &message.source {
             unblock_cli_pipe_input(pipe_id);
+            // 標準入力が端末でないと、zellij pipe は中身を送った後に中身なしでもう1回送ってくる
+            if message.payload.is_none() {
+                return false;
+            }
+        }
+        if message.name != PIPE_NAME {
+            // 操作はすべてのタブのサイドバーに届く。隠れているタブのサイドバーには
+            // どのタブが表示中かの更新が届かないので、フォーカス中のペインをその場で問い合わせ、
+            // それと同じタブにいるサイドバーだけが動く
+            if let Ok((tab, pane)) = get_focused_pane_info() {
+                if self.own_pane().map(|(own_tab, _)| own_tab) == Some(tab) {
+                    self.run(&message, pane);
+                }
+            }
+            return false;
         }
         let pane_id = message.args.get("pane").and_then(|v| v.parse().ok());
         let report = message.args.get("state").and_then(|v| Report::parse(v));
@@ -99,16 +134,21 @@ impl ZellijPlugin for State {
     }
 
     fn render(&mut self, _rows: usize, cols: usize) {
+        let mut number = 0;
         for line in self.model.lines() {
             match line {
                 Line::Tab(name) => println!("{BOLD}{}{RESET}", truncate(&name, cols)),
                 Line::Agent(row) => {
+                    number += 1;
                     let (icon, color) = status_style(row.status);
-                    let title = truncate(&row.title, cols.saturating_sub(4));
-                    println!(" {color}{icon}{RESET} {DIM}{title}{RESET}");
+                    let title = truncate(&row.title, cols.saturating_sub(6));
+                    println!("{DIM}{number:>2}{RESET} {color}{icon}{RESET} {DIM}{title}{RESET}");
                 }
             }
         }
+        // 一覧との間を1行あける
+        println!();
+        println!("{BOLD}{NEW_LABEL}{RESET}");
     }
 }
 
@@ -117,9 +157,89 @@ impl State {
         let Ok(index) = usize::try_from(line) else {
             return;
         };
-        if let Some(Line::Agent(row)) = self.model.lines().get(index) {
-            focus_terminal_pane(row.pane_id, false, false);
+        let lines = self.model.lines();
+        match lines.get(index) {
+            Some(Line::Agent(row)) => focus_terminal_pane(row.pane_id, false, false),
+            None if index == lines.len() + 1 => self.open_new_tab(None),
+            _ => {}
         }
+    }
+
+    fn run(&self, message: &PipeMessage, focused: PaneId) {
+        let current = match focused {
+            PaneId::Terminal(id) => Some(id),
+            PaneId::Plugin(_) => None,
+        };
+        let target = match message.name.as_str() {
+            NEW => return self.open_new_tab(message.args.get("cwd").cloned()),
+            NEXT => self.model.neighbor(current, 1),
+            PREV => self.model.neighbor(current, -1),
+            FOCUS => message
+                .args
+                .get("n")
+                .and_then(|n| n.parse().ok())
+                .and_then(|n| self.model.nth(n)),
+            _ => None,
+        };
+        if let Some(pane_id) = target {
+            focus_terminal_pane(pane_id, false, false);
+        }
+    }
+
+    /// 新しいタブで Claude Code を起動する。フォルダの指定がなければ、今いるペインと同じフォルダ
+    fn open_new_tab(&self, cwd: Option<String>) {
+        let cwd = cwd.or_else(|| {
+            let (_, pane_id) = get_focused_pane_info().ok()?;
+            Some(get_pane_cwd(pane_id).ok()?.display().to_string())
+        });
+        let Some(cwd) = cwd else {
+            return;
+        };
+        let Some(url) = self.own_pane().and_then(|(_, pane)| pane.plugin_url.clone()) else {
+            return;
+        };
+        let name = cwd.rsplit('/').find(|s| !s.is_empty()).unwrap_or("new");
+        let command = self
+            .configuration
+            .get("claude_command")
+            .map(String::as_str)
+            .unwrap_or("claude");
+        let config: String = self
+            .configuration
+            .iter()
+            .map(|(k, v)| format!("{k} {}; ", kdl_string(v)))
+            .collect();
+        // 新しいタブにもサイドバーを付けるので、レイアウトの default_tab_template と同じ形にする
+        new_tabs_with_layout(&format!(
+            r#"layout {{
+    tab name={name} cwd={cwd} focus=true {{
+        pane split_direction="vertical" {{
+            pane size=32 borderless=true {{
+                plugin location={url} {{ {config}}}
+            }}
+            pane command="sh" focus=true {{
+                args "-c" {command}
+            }}
+        }}
+        pane size=1 borderless=true {{
+            plugin location="compact-bar"
+        }}
+    }}
+}}"#,
+            name = kdl_string(name),
+            cwd = kdl_string(&cwd),
+            url = kdl_string(&url),
+            command = kdl_string(&format!("exec {command}")),
+        ));
+    }
+
+    fn own_pane(&self) -> Option<(usize, &PaneInfo)> {
+        self.manifest.as_ref()?.panes.iter().find_map(|(tab, panes)| {
+            panes
+                .iter()
+                .find(|p| p.is_plugin && p.id == self.plugin_id)
+                .map(|p| (*tab, p))
+        })
     }
 
     fn sync(&mut self) {
@@ -160,6 +280,10 @@ fn status_style(status: Status) -> (&'static str, &'static str) {
         Status::Done => ("✓", "\u{1b}[32m"),
         Status::Idle => ("○", "\u{1b}[90m"),
     }
+}
+
+fn kdl_string(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// 表示幅に収まるよう切り詰める

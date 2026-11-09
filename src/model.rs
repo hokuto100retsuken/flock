@@ -187,6 +187,34 @@ impl Model {
             .collect()
     }
 
+    /// サイドバーの並び順で、current から step 個先のエージェント。端まで行ったら反対側に回る。
+    /// current がエージェントでないときは、次なら先頭、前なら末尾
+    pub fn neighbor(&self, current: Option<u32>, step: isize) -> Option<u32> {
+        let ids = self.agent_ids();
+        if ids.is_empty() {
+            return None;
+        }
+        let len = ids.len() as isize;
+        let index = match ids.iter().position(|id| Some(*id) == current) {
+            Some(current) => (current as isize + step).rem_euclid(len),
+            None if step > 0 => 0,
+            None => len - 1,
+        };
+        Some(ids[index as usize])
+    }
+
+    /// サイドバーに出ている番号（1始まり）のエージェント
+    pub fn nth(&self, number: usize) -> Option<u32> {
+        self.agent_ids().get(number.checked_sub(1)?).copied()
+    }
+
+    fn agent_ids(&self) -> Vec<u32> {
+        self.groups()
+            .into_iter()
+            .flat_map(|g| g.rows.into_iter().map(|r| r.pane_id))
+            .collect()
+    }
+
     fn is_focused(&self, pane_id: u32) -> bool {
         self.panes.iter().any(|p| p.id == pane_id && p.focused)
     }
@@ -253,6 +281,35 @@ mod tests {
             })
             .collect();
         assert_eq!(lines, vec![None, Some(3), None, Some(5)]);
+    }
+
+    #[test]
+    fn 次と前は並び順で回り_端では反対側に戻る() {
+        let mut m = model();
+        for id in [1, 3, 5] {
+            m.apply(id, Report::Working);
+        }
+        assert_eq!(m.neighbor(Some(1), 1), Some(3));
+        assert_eq!(m.neighbor(Some(1), -1), Some(5));
+    }
+
+    #[test]
+    fn エージェント以外にいるときは次なら先頭_前なら末尾() {
+        let mut m = model();
+        m.apply(3, Report::Working);
+        m.apply(5, Report::Working);
+        assert_eq!(m.neighbor(Some(1), 1), Some(3));
+        assert_eq!(m.neighbor(Some(1), -1), Some(5));
+    }
+
+    #[test]
+    fn 番号は1始まりで範囲外はない() {
+        let mut m = model();
+        m.apply(3, Report::Working);
+        m.apply(5, Report::Working);
+        assert_eq!(m.nth(2), Some(5));
+        assert_eq!(m.nth(0), None);
+        assert_eq!(m.nth(3), None);
     }
 
     #[test]
