@@ -3,7 +3,7 @@ name = "flock"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Claude Code のエージェントを zellij で並べて見張る"
+description = "Watch Claude Code agents side by side in zellij"
 
 [dependencies]
 libc = "0.2"
