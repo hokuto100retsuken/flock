@@ -17,7 +17,7 @@ const LOG_TOGGLE: &str = "flock-log-toggle";
 /// 詳細を開いたペインの目印
 const DETAIL: &str = "flock-detail";
 
-/// タブの並びを書き出す。$1 がセッション名、$2 が中身。bin/flock が作り直すときに読む
+/// タブの並びを書き出す。$1 がセッション名、$2 が中身。flock を起動し直すときに読む
 const SAVE_TABS: &str = r#"dir=${XDG_STATE_HOME:-$HOME/.local/state}/flock && mkdir -p "$dir" && printf '%s\n' "$2" >"$dir/$1.tabs""#;
 
 // セッションの中だけで効かせる。zellij の設定ファイルには書かない
