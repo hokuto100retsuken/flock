@@ -4,5 +4,10 @@
 # zellij の外では何もしない。フックを止めないよう、送信の失敗は無視する。
 [ -n "$ZELLIJ_PANE_ID" ] || exit 0
 cat >/dev/null
-zellij pipe --name flock --args "pane=$ZELLIJ_PANE_ID,state=$1" -- "" >/dev/null 2>&1 </dev/null
+zellij pipe --name flock --args "pane=$ZELLIJ_PANE_ID,state=$1" -- "" >/dev/null 2>&1 </dev/null &
+pipe=$!
+# サイドバーが権限の確認待ちなどで受け取れないと pipe は返ってこないので、2秒で諦める
+( sleep 2; kill "$pipe" 2>/dev/null ) &
+wait "$pipe" 2>/dev/null
+kill $! 2>/dev/null
 exit 0
