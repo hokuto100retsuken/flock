@@ -25,9 +25,12 @@ case ${1:-} in
         echo "zellij の中では起動できません。flock new で新しいタブを開いてください" >&2
         exit 1
     fi
-    if zellij list-sessions --short --no-formatting 2>/dev/null | grep -qx "$session"; then
-        exec zellij attach "$session"
-    fi
+    state=$(zellij list-sessions --no-formatting 2>/dev/null | awk -v s="$session" '$1 == s { print (/EXITED/ ? "exited" : "running") }')
+    case $state in
+    running) exec zellij attach "$session" ;;
+    # 終了済みのセッションを復元すると、そのときのレイアウトと設定のまま戻ってしまうので作り直す
+    exited) zellij delete-session "$session" >/dev/null ;;
+    esac
     exec zellij --session "$session" --new-session-with-layout "$root/layouts/flock.kdl"
     ;;
 new)
