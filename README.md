@@ -25,19 +25,9 @@ zellij --layout layouts/flock.kdl
 
 ## Claude Code のフック
 
-`~/.claude/settings.json` の `hooks` に足す。zellij の外で動いているときは何もしない。
+フックの設定は `hooks/claude-settings.json` にある。zellij の外で動いているときは何もしない。
 
-```json
-{
-  "hooks": {
-    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "~/src/github.com/hokuto100retsuken/flock/hooks/flock-state idle" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "~/src/github.com/hokuto100retsuken/flock/hooks/flock-state working" }] }],
-    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "~/src/github.com/hokuto100retsuken/flock/hooks/flock-state working" }] }],
-    "Notification":     [{ "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "~/src/github.com/hokuto100retsuken/flock/hooks/flock-state blocked" }] }],
-    "Stop":             [{ "hooks": [{ "type": "command", "command": "~/src/github.com/hokuto100retsuken/flock/hooks/flock-state stop" }] }],
-    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "~/src/github.com/hokuto100retsuken/flock/hooks/flock-state end" }] }]
-  }
-}
-```
+- 試すとき: `claude --settings ~/src/github.com/hokuto100retsuken/flock/hooks/claude-settings.json`
+- 常に使うとき: 中身を `~/.claude/settings.json` の `hooks` に足す
 
 承認待ちのあと再開したことは、次のツール実行が終わった時点（`PostToolUse`）で working に戻して表す。

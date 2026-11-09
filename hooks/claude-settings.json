@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "~/src/github.com/hokuto100retsuken/flock/hooks/flock-state idle" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "~/src/github.com/hokuto100retsuken/flock/hooks/flock-state working" }] }],
+    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "~/src/github.com/hokuto100retsuken/flock/hooks/flock-state working" }] }],
+    "Notification":     [{ "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "~/src/github.com/hokuto100retsuken/flock/hooks/flock-state blocked" }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "~/src/github.com/hokuto100retsuken/flock/hooks/flock-state stop" }] }],
+    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "~/src/github.com/hokuto100retsuken/flock/hooks/flock-state end" }] }]
+  }
+}
