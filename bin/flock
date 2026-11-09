@@ -1,0 +1,46 @@
+#!/bin/sh
+# flock の zellij セッションを起動・操作する。
+#   flock              起動する。起動中なら繋ぎ直す
+#   flock new [DIR]    新しいタブで Claude Code を起動する（DIR の既定は今のフォルダ）
+#   flock focus N      サイドバーの N 番のエージェントへ移動する
+#   flock next|prev    次 / 前のエージェントへ移動する
+set -eu
+
+root=$(cd "$(dirname "$(realpath "$0")")/.." && pwd)
+session=${ZELLIJ_SESSION_NAME:-flock}
+
+# サイドバーへ操作を送る。受け取れないときに止まらないよう、2秒で諦める
+send() {
+    ZELLIJ_SESSION_NAME=$session zellij pipe --name "$1" ${2:+--args "$2"} -- "$1" >/dev/null 2>&1 </dev/null &
+    pipe=$!
+    ( sleep 2; kill "$pipe" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+    wait "$pipe" 2>/dev/null || true
+    kill $! 2>/dev/null || true
+}
+
+case ${1:-} in
+"")
+    if [ -n "${ZELLIJ:-}" ]; then
+        echo "zellij の中では起動できません。flock new で新しいタブを開いてください" >&2
+        exit 1
+    fi
+    if zellij list-sessions --short --no-formatting 2>/dev/null | grep -qx "$session"; then
+        exec zellij attach "$session"
+    fi
+    exec zellij --session "$session" --new-session-with-layout "$root/layouts/flock.kdl"
+    ;;
+new)
+    dir=$(cd "${2:-.}" && pwd)
+    send flock-new "cwd=$dir"
+    ;;
+focus)
+    send flock-focus "n=${2:?番号を指定してください}"
+    ;;
+next | prev)
+    send "flock-$1"
+    ;;
+*)
+    sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//' >&2
+    exit 1
+    ;;
+esac
