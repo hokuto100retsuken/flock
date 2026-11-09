@@ -22,20 +22,20 @@ pub fn run() -> Result {
         Err(_) => "{}".to_owned(),
     };
     let mut settings: Value =
-        serde_json::from_str(&text).map_err(|e| format!("{} を読めません: {e}", path.display()))?;
+        serde_json::from_str(&text).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     if !add_hooks(&mut settings)? {
-        println!("設定済みです: {}", path.display());
+        println!("already set up: {}", path.display());
         return Ok(());
     }
     if path.exists() {
         let backup = path.with_extension("json.bak");
         fs::copy(&path, &backup).map_err(|e| e.to_string())?;
-        println!("元の設定を {} に残しました", backup.display());
+        println!("saved the original settings to {}", backup.display());
     }
     let text = serde_json::to_string_pretty(&settings).unwrap() + "\n";
     fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
     fs::write(&path, text).map_err(|e| e.to_string())?;
-    println!("フックを足しました: {}", path.display());
+    println!("added the hooks: {}", path.display());
     Ok(())
 }
 
@@ -43,18 +43,18 @@ pub fn run() -> Result {
 fn add_hooks(settings: &mut Value) -> Result<bool> {
     let hooks = settings
         .as_object_mut()
-        .ok_or("設定がオブジェクトではありません")?
+        .ok_or("settings is not an object")?
         .entry("hooks")
         .or_insert_with(|| json!({}))
         .as_object_mut()
-        .ok_or("hooks がオブジェクトではありません")?;
+        .ok_or("hooks is not an object")?;
     let mut added = false;
     for (event, matcher, state) in HOOKS {
         let groups = hooks
             .entry(event)
             .or_insert_with(|| json!([]))
             .as_array_mut()
-            .ok_or_else(|| format!("hooks.{event} が配列ではありません"))?;
+            .ok_or_else(|| format!("hooks.{event} is not an array"))?;
         let exists = groups.iter().any(|group| {
             group["hooks"].as_array().into_iter().flatten().any(|hook| {
                 hook["command"]

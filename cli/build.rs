@@ -14,8 +14,8 @@ fn main() {
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env_remove("RUSTFLAGS")
         .status()
-        .expect("cargo を起動できません");
-    assert!(status.success(), "プラグインのビルドに失敗しました");
+        .expect("cannot run cargo");
+    assert!(status.success(), "failed to build the plugin");
     fs::copy(
         target_dir.join("wasm32-wasip1/release/flock-plugin.wasm"),
         out.join("flock.wasm"),

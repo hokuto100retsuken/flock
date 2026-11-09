@@ -161,7 +161,7 @@ impl Model {
         let text = match report {
             Report::Working if !detail.is_empty() => detail.to_owned(),
             Report::Blocked => format!("● {detail}"),
-            Report::Stop => "✓ 完了".to_owned(),
+            Report::Stop => "✓ done".to_owned(),
             _ => return,
         };
         let log = self.logs.entry(pane_id).or_default();
@@ -462,7 +462,7 @@ mod tests {
         assert_eq!(texts(3), vec!["Edit main.rs"]);
         assert_eq!(to.log(3).next().unwrap().file, "/tmp/a.txt");
         assert_eq!(to.saved_tabs()[0].session.as_deref(), Some("abc"));
-        assert_eq!(texts(5), vec!["✓ 完了"]);
+        assert_eq!(texts(5), vec!["✓ done"]);
     }
 
     #[test]

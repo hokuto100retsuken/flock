@@ -12,14 +12,14 @@ use std::{
 };
 
 const USAGE: &str = "\
-使い方:
-  flock              起動する。起動中なら繋ぎ直し、終了していたら前のタブを会話の続きから開き直す
+Usage:
+  flock              start; reattach if running, or reopen the previous tabs with their conversations if it was quit
   flock new [DIR] [--name NAME]
-                     新しいタブで Claude Code を起動する（DIR の既定は今のフォルダ、NAME の既定はフォルダ名）
-  flock focus N      サイドバーの N 番のエージェントへ移動する
-  flock next|prev    次 / 前のエージェントへ移動する
-  flock setup        Claude Code の設定に、状態をサイドバーへ送るフックを足す
-  flock hook STATE   Claude Code のフックから呼ぶ（working|blocked|stop|idle|end）";
+                     start Claude Code in a new tab (DIR defaults to the current folder, NAME to the folder name)
+  flock focus N      move to agent N in the sidebar
+  flock next|prev    move to the next / previous agent
+  flock setup        add the hooks that report state to the sidebar to your Claude Code settings
+  flock hook STATE   called from Claude Code hooks (working|blocked|stop|idle|end)";
 
 type Result<T = ()> = std::result::Result<T, String>;
 
@@ -30,7 +30,7 @@ fn main() -> ExitCode {
         Some("new") => new(&args[1..]),
         Some("focus") => match args.get(1) {
             Some(n) => Ok(pipe("flock-focus", Some(&format!("n={n}")), "flock-focus")),
-            None => Err("番号を指定してください".into()),
+            None => Err("specify a number".into()),
         },
         Some(step @ ("next" | "prev")) => {
             let name = format!("flock-{step}");
@@ -54,13 +54,13 @@ fn main() -> ExitCode {
 
 fn start() -> Result {
     if env::var_os("ZELLIJ").is_some() {
-        return Err("zellij の中では起動できません。flock new で新しいタブを開いてください".into());
+        return Err("cannot start inside zellij; use flock new to open a new tab".into());
     }
     let session = session();
     let listed = Command::new("zellij")
         .args(["list-sessions", "--no-formatting"])
         .output()
-        .map_err(|e| format!("zellij を起動できません: {e}"))?;
+        .map_err(|e| format!("cannot start zellij: {e}"))?;
     match layout::session_state(&String::from_utf8_lossy(&listed.stdout), &session) {
         Some(layout::SessionState::Running) => {
             return Err(Command::new("zellij").args(["attach", &session]).exec().to_string())
@@ -89,7 +89,7 @@ fn new(args: &[String]) -> Result {
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--name" => name = Some(args.next().ok_or("名前を指定してください")?),
+            "--name" => name = Some(args.next().ok_or("specify a name")?),
             _ => dir = PathBuf::from(arg),
         }
     }

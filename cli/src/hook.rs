@@ -73,7 +73,7 @@ fn detail(input: &Value) -> String {
                 out += &format!("[{key}]\n{}\n\n", text(value));
             }
             let response: String = text(&input["tool_response"]).chars().take(4000).collect();
-            out + "[結果]\n" + &response
+            out + "[result]\n" + &response
         }
         _ => str(&input["message"]).to_owned(),
     }
@@ -179,7 +179,7 @@ mod tests {
         });
         assert_eq!(
             detail(&edit),
-            "Edit\n\n[file_path]\n/a/main.rs\n\n[old_string]\na\nb\n\n[結果]\n{\"ok\":true}"
+            "Edit\n\n[file_path]\n/a/main.rs\n\n[old_string]\na\nb\n\n[result]\n{\"ok\":true}"
         );
     }
 }
