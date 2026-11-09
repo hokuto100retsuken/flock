@@ -5,7 +5,7 @@ layout {
         pane split_direction="vertical" {
             pane size=32 borderless=true {
                 plugin location="file:/Users/hokuto100retsuken/src/github.com/hokuto100retsuken/flock/target/wasm32-wasip1/release/flock.wasm" {
-                    claude_command "claude --settings /Users/hokuto100retsuken/src/github.com/hokuto100retsuken/flock/hooks/claude-settings.json"
+                    claude_command "claude"
                 }
             }
             children
@@ -19,7 +19,7 @@ layout {
         pane split_direction="vertical" {
             pane size=32 borderless=true {
                 plugin location="file:/Users/hokuto100retsuken/src/github.com/hokuto100retsuken/flock/target/wasm32-wasip1/release/flock.wasm" {
-                    claude_command "claude --settings /Users/hokuto100retsuken/src/github.com/hokuto100retsuken/flock/hooks/claude-settings.json"
+                    claude_command "claude"
                 }
             }
             pane
