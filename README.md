@@ -8,8 +8,9 @@ zellij のサイドバーに、各ペインで動いているコーディング�
 
 ## ビルド
 
+Rust のバージョンと WASM のターゲットは `rust-toolchain.toml` で決めている（rustup が自動で入れる）。
+
 ```sh
-mise install
 cargo build --release   # target/wasm32-wasip1/release/flock.wasm
 cargo test --target aarch64-apple-darwin
 ```
