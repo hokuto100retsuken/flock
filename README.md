@@ -45,7 +45,7 @@ cargo test
 
 ## Claude Code hooks
 
-`flock setup` adds hooks to `~/.claude/settings.json` that call `flock hook <state>` on each event (the original is saved as `settings.json.bak`). Outside zellij the hooks do nothing.
+`flock setup` adds hooks to `~/.claude/settings.json` that call `flock hook <state>` on each event, using the full path of the binary so it doesn't clash with util-linux's `flock` on Linux (the original is saved as `settings.json.bak`). Outside zellij the hooks do nothing.
 
 | Event | State sent |
 |---|---|

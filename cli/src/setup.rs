@@ -23,7 +23,9 @@ pub fn run() -> Result {
     };
     let mut settings: Value =
         serde_json::from_str(&text).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    if !add_hooks(&mut settings)? {
+    // Linux には util-linux の flock があるので、PATH を頼らずこのバイナリを直接呼ぶ
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    if !add_hooks(&mut settings, &exe.display().to_string())? {
         println!("already set up: {}", path.display());
         return Ok(());
     }
@@ -40,7 +42,7 @@ pub fn run() -> Result {
 }
 
 /// まだないイベントにだけ足す。足したら true
-fn add_hooks(settings: &mut Value) -> Result<bool> {
+fn add_hooks(settings: &mut Value, exe: &str) -> Result<bool> {
     let hooks = settings
         .as_object_mut()
         .ok_or("settings is not an object")?
@@ -59,14 +61,14 @@ fn add_hooks(settings: &mut Value) -> Result<bool> {
             group["hooks"].as_array().into_iter().flatten().any(|hook| {
                 hook["command"]
                     .as_str()
-                    .is_some_and(|c| c.starts_with("flock hook "))
+                    .is_some_and(|c| c.contains("flock hook "))
             })
         });
         if exists {
             continue;
         }
         let mut group = json!({
-            "hooks": [{ "type": "command", "command": format!("flock hook {state}"), "timeout": 5 }]
+            "hooks": [{ "type": "command", "command": format!("{exe} hook {state}"), "timeout": 5 }]
         });
         if let Some(matcher) = matcher {
             group["matcher"] = json!(matcher);
@@ -87,11 +89,11 @@ mod tests {
             "model": "opus",
             "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "other" }] }] }
         });
-        assert!(add_hooks(&mut settings).unwrap());
+        assert!(add_hooks(&mut settings, "/bin/flock").unwrap());
         let stop = settings["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.len(), 2);
-        assert_eq!(stop[1]["hooks"][0]["command"], "flock hook stop");
+        assert_eq!(stop[1]["hooks"][0]["command"], "/bin/flock hook stop");
         assert_eq!(settings["hooks"]["Notification"][0]["matcher"], "permission_prompt");
-        assert!(!add_hooks(&mut settings).unwrap());
+        assert!(!add_hooks(&mut settings, "/bin/flock").unwrap());
     }
 }
