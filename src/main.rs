@@ -137,7 +137,7 @@ impl ZellijPlugin for State {
         let mut number = 0;
         for line in self.model.lines() {
             match line {
-                Line::Tab(name) => println!("{BOLD}{}{RESET}", truncate(&name, cols)),
+                Line::Tab { name, .. } => println!("{BOLD}{}{RESET}", truncate(&name, cols)),
                 Line::Agent(row) => {
                     number += 1;
                     let (icon, color) = status_style(row.status);
@@ -160,7 +160,17 @@ impl State {
         let lines = self.model.lines();
         match lines.get(index) {
             Some(Line::Agent(row)) => focus_terminal_pane(row.pane_id, false, false),
-            None if index == lines.len() + 1 => self.open_new_tab(None),
+            // タブ名を押したら、そのタブへ切り替えて名前の入力状態にする（Ctrl+t → r と同じ）。
+            // 右クリックは zellij がプラグインに渡さないので左クリックにしている
+            Some(Line::Tab { position, .. }) => {
+                // switch_tab_to と rename_tab は1始まり
+                let tab = *position as u32 + 1;
+                switch_tab_to(tab);
+                // 入力状態に入った時点の名前が Esc で戻す先になるので、空にするのはその後
+                switch_to_input_mode(&InputMode::RenameTab);
+                rename_tab(tab, "");
+            }
+            None if index == lines.len() + 1 => self.open_new_tab(None, None),
             _ => {}
         }
     }
@@ -171,7 +181,12 @@ impl State {
             PaneId::Plugin(_) => None,
         };
         let target = match message.name.as_str() {
-            NEW => return self.open_new_tab(message.args.get("cwd").cloned()),
+            NEW => {
+                return self.open_new_tab(
+                    message.args.get("cwd").cloned(),
+                    message.args.get("name").cloned(),
+                )
+            }
             NEXT => self.model.neighbor(current, 1),
             PREV => self.model.neighbor(current, -1),
             FOCUS => message
@@ -186,8 +201,9 @@ impl State {
         }
     }
 
-    /// 新しいタブで Claude Code を起動する。フォルダの指定がなければ、今いるペインと同じフォルダ
-    fn open_new_tab(&self, cwd: Option<String>) {
+    /// 新しいタブで Claude Code を起動する。フォルダの指定がなければ今いるペインと同じフォルダ、
+    /// 名前の指定がなければフォルダ名
+    fn open_new_tab(&self, cwd: Option<String>, name: Option<String>) {
         let cwd = cwd.or_else(|| {
             let (_, pane_id) = get_focused_pane_info().ok()?;
             Some(get_pane_cwd(pane_id).ok()?.display().to_string())
@@ -198,7 +214,12 @@ impl State {
         let Some(url) = self.own_pane().and_then(|(_, pane)| pane.plugin_url.clone()) else {
             return;
         };
-        let name = cwd.rsplit('/').find(|s| !s.is_empty()).unwrap_or("new");
+        let name = name.unwrap_or_else(|| {
+            cwd.rsplit('/')
+                .find(|s| !s.is_empty())
+                .unwrap_or("new")
+                .to_owned()
+        });
         let command = self
             .configuration
             .get("claude_command")
@@ -226,7 +247,7 @@ impl State {
         }}
     }}
 }}"#,
-            name = kdl_string(name),
+            name = kdl_string(&name),
             cwd = kdl_string(&cwd),
             url = kdl_string(&url),
             command = kdl_string(&format!("exec {command}")),

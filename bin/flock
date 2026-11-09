@@ -1,7 +1,8 @@
 #!/bin/sh
 # flock の zellij セッションを起動・操作する。
 #   flock              起動する。起動中なら繋ぎ直す
-#   flock new [DIR]    新しいタブで Claude Code を起動する（DIR の既定は今のフォルダ）
+#   flock new [DIR] [--name NAME]
+#                      新しいタブで Claude Code を起動する（DIR の既定は今のフォルダ、NAME の既定はフォルダ名）
 #   flock focus N      サイドバーの N 番のエージェントへ移動する
 #   flock next|prev    次 / 前のエージェントへ移動する
 set -eu
@@ -30,8 +31,16 @@ case ${1:-} in
     exec zellij --session "$session" --new-session-with-layout "$root/layouts/flock.kdl"
     ;;
 new)
-    dir=$(cd "${2:-.}" && pwd)
-    send flock-new "cwd=$dir"
+    shift
+    dir=. name=
+    while [ $# -gt 0 ]; do
+        case $1 in
+        --name) name=${2:?名前を指定してください}; shift 2 ;;
+        *) dir=$1; shift ;;
+        esac
+    done
+    dir=$(cd "$dir" && pwd)
+    send flock-new "cwd=$dir${name:+,name=$name}"
     ;;
 focus)
     send flock-focus "n=${2:?番号を指定してください}"
@@ -40,7 +49,7 @@ next | prev)
     send "flock-$1"
     ;;
 *)
-    sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 1
     ;;
 esac

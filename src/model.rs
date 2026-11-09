@@ -75,13 +75,14 @@ pub struct Row {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Group {
+    pub tab_position: usize,
     pub tab_name: String,
     pub rows: Vec<Row>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Line {
-    Tab(String),
+    Tab { position: usize, name: String },
     Agent(Row),
 }
 
@@ -169,6 +170,7 @@ impl Model {
                 }
                 rows.sort_by_key(|r| r.pane_id);
                 Some(Group {
+                    tab_position: tab.position,
                     tab_name: tab.name,
                     rows,
                 })
@@ -181,7 +183,10 @@ impl Model {
         self.groups()
             .into_iter()
             .flat_map(|group| {
-                std::iter::once(Line::Tab(group.tab_name))
+                std::iter::once(Line::Tab {
+                    position: group.tab_position,
+                    name: group.tab_name,
+                })
                     .chain(group.rows.into_iter().map(Line::Agent))
             })
             .collect()
@@ -276,7 +281,7 @@ mod tests {
             .lines()
             .iter()
             .map(|l| match l {
-                Line::Tab(_) => None,
+                Line::Tab { .. } => None,
                 Line::Agent(row) => Some(row.pane_id),
             })
             .collect();
@@ -322,7 +327,7 @@ mod tests {
         to.import(&from.export());
         let statuses: Vec<Status> = to.lines().iter().filter_map(|l| match l {
             Line::Agent(row) => Some(row.status),
-            Line::Tab(_) => None,
+            Line::Tab { .. } => None,
         }).collect();
         assert_eq!(statuses, vec![Status::Working, Status::Working]);
     }
