@@ -336,7 +336,7 @@ impl Model {
             .collect()
     }
 
-    fn is_focused(&self, pane_id: u32) -> bool {
+    pub fn is_focused(&self, pane_id: u32) -> bool {
         self.panes.iter().any(|p| p.id == pane_id && p.focused)
     }
 }

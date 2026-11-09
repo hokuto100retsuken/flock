@@ -32,6 +32,7 @@ keybinds {
 "#;
 
 const NEW_LABEL: &str = "＋ new";
+const HINT: &str = "Alt+j/k move · Alt+g log";
 /// 右側のログの幅。レイアウトの size と合わせる
 const LOG_WIDTH: usize = 40;
 /// 戻したログを LOG_WIDTH まで縮めるときに、縮める回数の上限
@@ -40,6 +41,9 @@ const FIT_TRIES: u32 = 20;
 const RESET: &str = "\u{1b}[0m";
 const BOLD: &str = "\u{1b}[1m";
 const DIM: &str = "\u{1b}[2m";
+const GREEN: &str = "\u{1b}[32m";
+/// 選んでいる行の背景。lazygit の既定と同じ青
+const SELECTED: &str = "\u{1b}[44m";
 
 #[derive(Default)]
 struct State {
@@ -58,8 +62,6 @@ struct State {
     fitting: u32,
     /// 最後に縮めたときの幅。縮めた結果が届く前に重ねて縮めないよう、幅が変わるまで待つ
     fitted_from: Option<usize>,
-    /// 一度隠して戻した
-    restored: bool,
     /// ログの各行を押したときに開く詳細のファイル
     row_files: Vec<String>,
     session_name: Option<String>,
@@ -157,7 +159,6 @@ impl ZellijPlugin for State {
                         show_self(false);
                         self.fitting = FIT_TRIES;
                         self.fitted_from = None;
-                        self.restored = true;
                     }
                 }
                 return false;
@@ -212,56 +213,63 @@ impl ZellijPlugin for State {
         if self.log_view {
             return self.render_log(rows, cols);
         }
+        let inner = cols.saturating_sub(2);
+        let mut body = Vec::new();
         let mut number = 0;
         for line in self.model.lines() {
             match line {
-                Line::Tab { name, .. } => println!("{BOLD}{}{RESET}", truncate(&name, cols)),
+                Line::Tab { name, .. } => {
+                    body.push(format!(" {BOLD}{}{RESET}", truncate(&name, inner.saturating_sub(1))))
+                }
                 Line::Agent(row) => {
                     number += 1;
                     let (icon, color) = status_style(row.status);
-                    let title = truncate(&row.title, cols.saturating_sub(6));
-                    println!("{DIM}{number:>2}{RESET} {color}{icon}{RESET} {DIM}{title}{RESET}");
+                    let title = truncate(&row.title, inner.saturating_sub(7));
+                    body.push(if self.model.is_focused(row.pane_id) {
+                        selected(&format!(" {number:>2} {color}{icon}{RESET} {BOLD}{title}{RESET}"), inner)
+                    } else {
+                        format!(" {DIM}{number:>2}{RESET} {color}{icon}{RESET} {DIM}{title}{RESET}")
+                    });
                 }
             }
         }
         // 一覧との間を1行あける
-        println!();
-        println!("{BOLD}{NEW_LABEL}{RESET}");
+        body.push(String::new());
+        body.push(format!(" {BOLD}{NEW_LABEL}{RESET}"));
+        let mut lines = boxed(&format!("{BOLD}Agents{RESET}"), GREEN, &body, cols, rows.saturating_sub(1));
+        lines.push(format!(" {DIM}{}{RESET}", truncate(HINT, cols.saturating_sub(1))));
+        // 最後の行で改行すると1行ずれる
+        print!("{}", lines.join("\n"));
     }
 }
 
 impl State {
     /// 右側のログ。このタブでフォーカスしているエージェントの指示と操作を、新しいものを下に出す
     fn render_log(&mut self, rows: usize, cols: usize) {
-        // 隠して戻したペインは枠なしの指定が外れて zellij が区切り線を引くので、自分では引かない
-        let bar = if self.restored { String::new() } else { format!("{DIM}│{RESET}") };
-        let width = cols.saturating_sub(2);
-        let mut lines = Vec::new();
-        self.row_files.clear();
-        if let Some((pane_id, title)) = self.log_target() {
+        let inner = cols.saturating_sub(2);
+        let mut title = format!("{BOLD}Log{RESET}");
+        let mut body = Vec::new();
+        // 上の枠の行は押しても何も開かない
+        self.row_files = vec![String::new()];
+        if let Some((pane_id, name)) = self.log_target() {
             let (icon, color) = self
                 .model
                 .status(pane_id)
                 .map(status_style)
                 .unwrap_or(("○", ""));
-            let title = truncate(&title, width.saturating_sub(2));
-            lines.push(format!("{color}{icon}{RESET} {BOLD}{title}{RESET}"));
-            lines.push(String::new());
+            title = format!("{color}{icon}{RESET} {BOLD}{}{RESET}", truncate(&name, inner.saturating_sub(5)));
             let entries: Vec<_> = self.model.log(pane_id).collect();
-            let room = rows.saturating_sub(lines.len());
-            self.row_files = vec![String::new(); lines.len()];
+            let room = rows.saturating_sub(2);
             for entry in &entries[entries.len().saturating_sub(room)..] {
                 self.row_files.push(entry.file.clone());
-                let text = truncate(&entry.text, width.saturating_sub(entry.time.len() + 1));
+                let text = truncate(&entry.text, inner.saturating_sub(entry.time.len() + 2));
                 // 指示は操作と見分けやすいよう太字にする
                 let style = if text.starts_with("> ") { BOLD } else { "" };
-                lines.push(format!("{DIM}{}{RESET} {style}{text}{RESET}", entry.time));
+                body.push(format!(" {DIM}{}{RESET} {style}{text}{RESET}", entry.time));
             }
         }
-        // 区切り線を下まで引くため、空いた行にも出す。最後の行で改行すると1行ずれる
-        lines.resize(rows, String::new());
-        let lines: Vec<String> = lines.iter().map(|l| format!("{bar} {l}")).collect();
-        print!("{}", lines.join("\n"));
+        // 最後の行で改行すると1行ずれる
+        print!("{}", boxed(&title, "", &body, cols, rows).join("\n"));
     }
 
     fn open_detail(&self, line: isize) {
@@ -333,7 +341,8 @@ impl State {
     }
 
     fn focus_line(&self, line: isize) {
-        let Ok(index) = usize::try_from(line) else {
+        // 上の枠の1行ぶんずらす
+        let Ok(index) = usize::try_from(line - 1) else {
             return;
         };
         let lines = self.model.lines();
@@ -528,6 +537,44 @@ fn status_style(status: Status) -> (&'static str, &'static str) {
 
 fn kdl_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// lazygit のように角の丸い枠で囲み、上の枠にタイトルを入れる。中身が足りない行は空ける
+fn boxed(title: &str, color: &str, body: &[String], width: usize, height: usize) -> Vec<String> {
+    let inner = width.saturating_sub(2);
+    let fill = inner.saturating_sub(visible_width(title) + 3);
+    let mut lines = vec![format!("{color}╭─{RESET} {title} {color}{}╮{RESET}", "─".repeat(fill))];
+    for i in 0..height.saturating_sub(2) {
+        let line = body.get(i).map(String::as_str).unwrap_or_default();
+        let pad = inner.saturating_sub(visible_width(line));
+        lines.push(format!("{color}│{RESET}{line}{}{color}│{RESET}", " ".repeat(pad)));
+    }
+    lines.push(format!("{color}╰{}╯{RESET}", "─".repeat(inner)));
+    lines
+}
+
+/// 選んでいる行として、幅いっぱいに背景を塗る
+fn selected(line: &str, width: usize) -> String {
+    let pad = width.saturating_sub(visible_width(line));
+    // 途中の RESET で背景が消えないよう塗り直す
+    let line = line.replace(RESET, &format!("{RESET}{SELECTED}"));
+    format!("{SELECTED}{line}{}{RESET}", " ".repeat(pad))
+}
+
+/// 色の指定を除いた表示幅
+fn visible_width(s: &str) -> usize {
+    let mut width = 0;
+    let mut escape = false;
+    for c in s.chars() {
+        if escape {
+            escape = !c.is_ascii_alphabetic();
+        } else if c == '\u{1b}' {
+            escape = true;
+        } else {
+            width += c.width().unwrap_or(0);
+        }
+    }
+    width
 }
 
 /// 表示幅に収まるよう切り詰める
