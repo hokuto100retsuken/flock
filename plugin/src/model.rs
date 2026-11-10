@@ -281,7 +281,7 @@ impl Model {
                         self.statuses.get(&p.id).map(|status| Row {
                             pane_id: p.id,
                             status: *status,
-                            title: p.title.clone(),
+                            title: display_title(&p.title),
                         })
                     })
                     .collect();
@@ -342,6 +342,14 @@ impl Model {
 
     pub fn is_focused(&self, pane_id: u32) -> bool {
         self.panes.iter().any(|p| p.id == pane_id && p.focused)
+    }
+}
+
+/// タイトルを付けないエージェントは zellij が起動コマンドをタイトルにするので、コマンド名だけにする
+fn display_title(title: &str) -> String {
+    match title.strip_prefix("sh -c exec ") {
+        Some(command) => command.split_whitespace().next().unwrap_or(command).to_owned(),
+        None => title.to_owned(),
     }
 }
 
@@ -529,5 +537,11 @@ mod tests {
         m.apply(3, Report::Working);
         m.set_panes(vec![pane(3, 0, true)]);
         assert_eq!(ids(&m), vec![3]);
+    }
+
+    #[test]
+    fn 起動コマンドのタイトルはコマンド名だけ() {
+        assert_eq!(display_title("sh -c exec agy --conversation 'c1'"), "agy");
+        assert_eq!(display_title("✳ Fix bug"), "✳ Fix bug");
     }
 }
