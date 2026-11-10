@@ -43,6 +43,15 @@ flock next|prev    # move to the next / previous agent
 
 On first launch, and whenever the plugin needs new permissions, the sidebar and the right-hand log each ask for permission: click each one and press `y`. Reorder tabs with zellij's `Alt+i` / `Alt+o`; the sidebar follows.
 
+### With Antigravity CLI
+
+1. Install Antigravity CLI and run `agy` once, so that `~/.gemini` exists.
+2. Run `flock setup`. It adds the hooks to `~/.gemini/config/hooks.json`. It skips Antigravity CLI when `~/.gemini` doesn't exist, so run it again if you installed `agy` later.
+3. Start an agent with `＋ new` → `Antigravity` in the sidebar, or with `flock new --agent agy`. An `agy` you start yourself in a pane is listed once you send it the first prompt.
+4. After Ctrl+q, `flock` reopens the tab and resumes the conversation with `agy --conversation <ID>`.
+
+Claude Code and Antigravity CLI can run side by side in the same session. See [Hooks](#antigravity-cli) for what Antigravity CLI can't report.
+
 On start, the plugin is written to `~/.local/share/flock/flock.wasm`. The tab layout and log details are kept in `~/.local/state/flock/`.
 
 ## Development
