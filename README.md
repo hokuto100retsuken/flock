@@ -13,7 +13,16 @@ A zellij sidebar that shows the state of the coding agents running in each pane.
 
 ## Install
 
-Download the binary for your platform from [Releases](https://github.com/hokuto100retsuken/flock/releases) and put it on your PATH. The sidebar plugin is embedded in the binary, so the only other requirement is [zellij](https://zellij.dev/) 0.45 or later.
+With Homebrew (macOS / Linux):
+
+```sh
+brew install hokuto100retsuken/tap/flock
+flock setup        # add the hooks to your Claude Code settings
+```
+
+Use the full name: plain `brew install flock` installs an unrelated file-locking tool.
+
+Or download the binary for your platform from [Releases](https://github.com/hokuto100retsuken/flock/releases) and put it on your PATH. The sidebar plugin is embedded in the binary, so the only other requirement is [zellij](https://zellij.dev/) 0.45 or later.
 
 ```sh
 # macOS (Apple Silicon)
