@@ -57,10 +57,14 @@ fn render(plugin: &str, claude: &str, saved: &str) -> String {
             let pane = if session.is_empty() {
                 "        pane".to_owned()
             } else {
-                // Claude Code を終了したらペインごと閉じる
+                let resume = match session.strip_prefix("agy:") {
+                    Some(id) => format!("exec agy --conversation '{id}'"),
+                    None => format!("exec {claude} --resume '{session}'"),
+                };
+                // エージェントを終了したらペインごと閉じる
                 format!(
                     "        pane command=\"sh\" close_on_exit=true {{\n            args \"-c\" {}\n        }}",
-                    kdl_string(&format!("exec {claude} --resume '{session}'"))
+                    kdl_string(&resume)
                 )
             };
             Some(format!(
@@ -105,6 +109,8 @@ mod tests {
             "    tab name=\"main\" cwd=\"/a\" focus=true {\n        pane command=\"sh\" close_on_exit=true {\n            args \"-c\" \"exec claude --resume 'abc'\"\n        }\n    }"
         ));
         assert!(kdl.contains("    tab name=\"API \\\"x\\\"\" cwd=\"/b\" {\n        pane\n    }"));
+        let agy = render("/p", "claude", "main\t/a\tagy:c1\n");
+        assert!(agy.contains("args \"-c\" \"exec agy --conversation 'c1'\""));
     }
 
     #[test]
