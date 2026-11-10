@@ -33,7 +33,7 @@ keybinds {
 
 const NEW_LABEL: &str = "＋ new";
 /// ＋ new を押すと出す選択肢。名前と flock new の --agent に当たる値
-const AGENTS: [(&str, Option<&str>); 2] = [("claude", None), ("Antigravity", Some("agy"))];
+const AGENTS: [(&str, Option<&str>); 2] = [("Claude Code", None), ("Antigravity", Some("agy"))];
 const HINT: &str = "Alt+j/k move · Alt+g log";
 /// working のアイコンをこの順に回す
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
