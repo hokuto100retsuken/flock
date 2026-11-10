@@ -14,12 +14,13 @@ use std::{
 const USAGE: &str = "\
 Usage:
   flock              start; reattach if running, or reopen the previous tabs with their conversations if it was quit
-  flock new [DIR] [--name NAME]
-                     start Claude Code in a new tab (DIR defaults to the current folder, NAME to the folder name)
+  flock new [DIR] [--name NAME] [--agent claude|agy]
+                     start Claude Code (or Antigravity CLI with --agent agy) in a new tab
+                     (DIR defaults to the current folder, NAME to the folder name)
   flock focus N      move to agent N in the sidebar
   flock next|prev    move to the next / previous agent
-  flock setup        add the hooks that report state to the sidebar to your Claude Code settings
-  flock hook STATE   called from Claude Code hooks (working|blocked|stop|idle|end)";
+  flock setup        add the hooks that report state to the sidebar to your Claude Code and Antigravity CLI settings
+  flock hook STATE   called from the agent's hooks (working|blocked|stop|idle|end)";
 
 type Result<T = ()> = std::result::Result<T, String>;
 
@@ -86,10 +87,15 @@ fn start() -> Result {
 fn new(args: &[String]) -> Result {
     let mut dir = PathBuf::from(".");
     let mut name = None;
+    let mut agent = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--name" => name = Some(args.next().ok_or("specify a name")?),
+            "--agent" => match args.next().map(String::as_str) {
+                Some(a @ ("claude" | "agy")) => agent = Some(a),
+                _ => return Err("specify claude or agy for --agent".into()),
+            },
             _ => dir = PathBuf::from(arg),
         }
     }
@@ -99,6 +105,9 @@ fn new(args: &[String]) -> Result {
     let mut message = format!("cwd={}", dir.display());
     if let Some(name) = name {
         message += &format!(",name={name}");
+    }
+    if let Some(agent) = agent {
+        message += &format!(",agent={agent}");
     }
     pipe("flock-new", Some(&message), "flock-new");
     Ok(())

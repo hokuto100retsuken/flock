@@ -368,7 +368,7 @@ impl State {
             Some(Line::Agent(row)) => focus_terminal_pane(row.pane_id, false, false),
             // switch_tab_to は1始まり
             Some(Line::Tab { position, .. }) => switch_tab_to(*position as u32 + 1),
-            None if index == lines.len() + 1 => self.open_new_tab(None, None),
+            None if index == lines.len() + 1 => self.open_new_tab(None, None, None),
             _ => {}
         }
     }
@@ -383,6 +383,7 @@ impl State {
                 return self.open_new_tab(
                     message.args.get("cwd").cloned(),
                     message.args.get("name").cloned(),
+                    message.args.get("agent").map(String::as_str),
                 )
             }
             NEXT => self.model.neighbor(current, 1),
@@ -399,9 +400,9 @@ impl State {
         }
     }
 
-    /// 新しいタブで Claude Code を起動する。フォルダの指定がなければ今いるペインと同じフォルダ、
-    /// 名前の指定がなければフォルダ名
-    fn open_new_tab(&self, cwd: Option<String>, name: Option<String>) {
+    /// 新しいタブでエージェント（指定がなければ Claude Code）を起動する。
+    /// フォルダの指定がなければ今いるペインと同じフォルダ、名前の指定がなければフォルダ名
+    fn open_new_tab(&self, cwd: Option<String>, name: Option<String>, agent: Option<&str>) {
         let cwd = cwd.or_else(|| {
             let (_, pane_id) = get_focused_pane_info().ok()?;
             Some(get_pane_cwd(pane_id).ok()?.display().to_string())
@@ -418,11 +419,14 @@ impl State {
                 .unwrap_or("new")
                 .to_owned()
         });
-        let command = self
-            .configuration
-            .get("claude_command")
-            .map(String::as_str)
-            .unwrap_or("claude");
+        let command = match agent {
+            Some("agy") => "agy",
+            _ => self
+                .configuration
+                .get("claude_command")
+                .map(String::as_str)
+                .unwrap_or("claude"),
+        };
         let config: String = self
             .configuration
             .iter()
