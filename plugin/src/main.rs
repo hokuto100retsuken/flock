@@ -521,6 +521,7 @@ impl State {
                         id: p.id,
                         tab_position: *tab_position,
                         title: p.title.clone(),
+                        command: p.terminal_command.clone().unwrap_or_default(),
                         focused: p.is_focused && active_tab == Some(*tab_position),
                     })
             })

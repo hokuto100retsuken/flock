@@ -60,6 +60,8 @@ pub struct Pane {
     pub id: u32,
     pub tab_position: usize,
     pub title: String,
+    /// 起動したコマンド。zellij が起動したペインでなければ空
+    pub command: String,
     pub focused: bool,
 }
 
@@ -143,13 +145,12 @@ impl Model {
         self.logs.retain(|id, _| self.panes.iter().any(|p| p.id == *id));
         self.sessions
             .retain(|id, _| self.panes.iter().any(|p| p.id == *id));
-        // Antigravity CLI は会話を再開しても指示を受けるまでフックを呼ばないので、復元したペインは起動コマンドから拾う
+        // 復元したペインは起動コマンドから会話を拾う。フックの報告を待つと、届く前に保存したタブから会話が消え、
+        // Antigravity CLI は再開しても指示を受けるまでフックを呼ばない
         for pane in &self.panes {
-            if let Some(id) = pane.title.strip_prefix("sh -c exec agy --conversation ") {
+            if let Some(session) = resumed_session(&pane.command) {
                 self.statuses.entry(pane.id).or_insert(Status::Idle);
-                self.sessions
-                    .entry(pane.id)
-                    .or_insert_with(|| format!("agy:{}", id.trim_matches('\'')));
+                self.sessions.entry(pane.id).or_insert(session);
             }
         }
         for pane in self.panes.iter().filter(|p| p.focused) {
@@ -354,6 +355,15 @@ impl Model {
     }
 }
 
+/// flock が復元のために起動したコマンドから会話の ID を読む
+fn resumed_session(command: &str) -> Option<String> {
+    if let Some((_, rest)) = command.split_once(" --conversation '") {
+        return Some(format!("agy:{}", rest.split('\'').next()?));
+    }
+    let (_, rest) = command.split_once(" --resume '")?;
+    Some(rest.split('\'').next()?.to_owned())
+}
+
 /// タイトルを付けないエージェントは zellij が起動コマンドをタイトルにするので、コマンド名だけにする
 pub fn display_title(title: &str) -> String {
     match title.strip_prefix("sh -c exec ") {
@@ -371,6 +381,7 @@ mod tests {
             id,
             tab_position: tab,
             title: format!("p{id}"),
+            command: String::new(),
             focused,
         }
     }
@@ -555,12 +566,15 @@ mod tests {
     }
 
     #[test]
-    fn 復元した_antigravity_は報告がなくても待機中で出す() {
+    fn 復元したペインは報告がなくても起動コマンドの会話で出す() {
         let mut m = model();
-        let mut agy = pane(7, 0, false);
-        agy.title = "sh -c exec agy --conversation 'c1'".into();
-        m.set_panes(vec![agy]);
-        assert_eq!(m.status(7), Some(Status::Idle));
-        assert_eq!(m.saved_tabs()[0].session.as_deref(), Some("agy:c1"));
+        let mut claude = pane(5, 1, false);
+        claude.command = "sh -c exec claude --resume 'abc'".into();
+        let mut agy = pane(3, 0, false);
+        agy.command = "sh -c exec agy --conversation 'c1'".into();
+        m.set_panes(vec![claude, agy, pane(1, 0, true)]);
+        assert_eq!(ids(&m), vec![3, 5]);
+        let sessions: Vec<_> = m.saved_tabs().into_iter().map(|t| t.session).collect();
+        assert_eq!(sessions, vec![Some("agy:c1".into()), Some("abc".into())]);
     }
 }
