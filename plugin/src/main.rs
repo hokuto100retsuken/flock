@@ -2,7 +2,7 @@ mod model;
 
 use std::collections::BTreeMap;
 
-use model::{Line, Model, Pane, Report, Status, Tab};
+use model::{display_title, Line, Model, Pane, Report, Status, Tab};
 use unicode_width::UnicodeWidthChar;
 use zellij_tile::prelude::*;
 
@@ -353,7 +353,7 @@ impl State {
             None if self.shown.is_some_and(|id| agents.iter().any(|p| p.id == id)) => self.shown,
             None => agents.first().map(|p| p.id),
         };
-        let title = agents.iter().find(|p| Some(p.id) == shown)?.title.clone();
+        let title = display_title(&agents.iter().find(|p| Some(p.id) == shown)?.title);
         self.shown = shown;
         shown.map(|id| (id, title))
     }

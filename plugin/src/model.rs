@@ -346,7 +346,7 @@ impl Model {
 }
 
 /// タイトルを付けないエージェントは zellij が起動コマンドをタイトルにするので、コマンド名だけにする
-fn display_title(title: &str) -> String {
+pub fn display_title(title: &str) -> String {
     match title.strip_prefix("sh -c exec ") {
         Some(command) => command.split_whitespace().next().unwrap_or(command).to_owned(),
         None => title.to_owned(),
