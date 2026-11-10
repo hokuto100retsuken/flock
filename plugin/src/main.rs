@@ -49,6 +49,8 @@ const DIM: &str = "\u{1b}[2m";
 const GREEN: &str = "\u{1b}[32m";
 /// 選んでいる行の背景。lazygit の既定と同じ青
 const SELECTED: &str = "\u{1b}[44m";
+/// マウスが乗っている、押せる行
+const HOVER: &str = "\u{1b}[100m";
 
 #[derive(Default)]
 struct State {
@@ -78,6 +80,8 @@ struct State {
     spinning: bool,
     /// ＋ new を押して、起動するエージェントの選択肢を出している
     choosing: bool,
+    /// マウスが乗っている行。zellij はペインから出たことを知らせないので、最後に乗った行のまま残る
+    hover: Option<usize>,
 }
 
 register_plugin!(State);
@@ -138,6 +142,12 @@ impl ZellijPlugin for State {
                 return false;
             }
             Event::Mouse(Mouse::LeftClick(line, _)) => return self.focus_line(line),
+            Event::Mouse(Mouse::Hover(line, _)) => {
+                let hover = usize::try_from(line).ok();
+                let changed = hover != self.hover;
+                self.hover = hover;
+                return changed;
+            }
             // 詳細は less を閉じたらペインごと閉じる。閉じないと終了したペインが残る
             Event::CommandPaneExited(pane_id, _, context) if context.contains_key(DETAIL) => {
                 close_terminal_pane(pane_id);
@@ -233,6 +243,8 @@ impl ZellijPlugin for State {
             return self.render_log(rows, cols);
         }
         let inner = cols.saturating_sub(2);
+        // 上の枠の1行ぶんずらす
+        let hovered = self.hover.and_then(|line| line.checked_sub(1));
         let mut body = Vec::new();
         let mut number = 0;
         for line in self.model.lines() {
@@ -244,19 +256,26 @@ impl ZellijPlugin for State {
                     number += 1;
                     let (icon, color) = status_style(row.status, self.frame);
                     let title = truncate(&row.title, inner.saturating_sub(7));
-                    body.push(if self.model.is_focused(row.pane_id) {
-                        selected(&format!(" {number:>2} {color}{icon}{RESET} {BOLD}{title}{RESET}"), inner)
+                    let focused = self.model.is_focused(row.pane_id);
+                    body.push(if focused && hovered != Some(body.len()) {
+                        paint(&format!(" {number:>2} {color}{icon}{RESET} {BOLD}{title}{RESET}"), inner, SELECTED)
+                    } else if focused {
+                        format!(" {number:>2} {color}{icon}{RESET} {BOLD}{title}{RESET}")
                     } else {
                         format!(" {DIM}{number:>2}{RESET} {color}{icon}{RESET} {DIM}{title}{RESET}")
                     });
                 }
             }
         }
-        // 一覧との間を1行あける
+        // 一覧との間を1行あける。空き行は押しても何も起きないので光らせない
+        let blank = body.len();
         body.push(String::new());
         body.push(format!(" {BOLD}{NEW_LABEL}{RESET}"));
         if self.choosing {
             body.extend(AGENTS.iter().map(|(name, _)| format!("    {name}")));
+        }
+        if let Some(i) = hovered.filter(|&i| i != blank && i < body.len()) {
+            body[i] = paint(&body[i], inner, HOVER);
         }
         let mut lines = boxed(&format!("{BOLD}Agents{RESET}"), GREEN, &body, cols, rows.saturating_sub(1));
         lines.push(format!(" {DIM}{}{RESET}", truncate(HINT, cols.saturating_sub(1))));
@@ -287,7 +306,13 @@ impl State {
                 let text = truncate(&entry.text, inner.saturating_sub(entry.time.len() + 2));
                 // 指示は操作と見分けやすいよう太字にする
                 let style = if text.starts_with("> ") { BOLD } else { "" };
-                body.push(format!(" {DIM}{}{RESET} {style}{text}{RESET}", entry.time));
+                let line = format!(" {DIM}{}{RESET} {style}{text}{RESET}", entry.time);
+                let clickable = !entry.file.is_empty();
+                body.push(if clickable && self.hover == Some(self.row_files.len() - 1) {
+                    paint(&line, inner, HOVER)
+                } else {
+                    line
+                });
             }
         }
         // 最後の行で改行すると1行ずれる
@@ -582,11 +607,12 @@ fn boxed(title: &str, color: &str, body: &[String], width: usize, height: usize)
 }
 
 /// 選んでいる行として、幅いっぱいに背景を塗る
-fn selected(line: &str, width: usize) -> String {
+/// 行の幅いっぱいを背景色で塗る
+fn paint(line: &str, width: usize, background: &str) -> String {
     let pad = width.saturating_sub(visible_width(line));
     // 途中の RESET で背景が消えないよう塗り直す
-    let line = line.replace(RESET, &format!("{RESET}{SELECTED}"));
-    format!("{SELECTED}{line}{}{RESET}", " ".repeat(pad))
+    let line = line.replace(RESET, &format!("{RESET}{background}"));
+    format!("{background}{line}{}{RESET}", " ".repeat(pad))
 }
 
 /// 色の指定を除いた表示幅
