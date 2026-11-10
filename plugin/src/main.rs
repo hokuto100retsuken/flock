@@ -32,6 +32,8 @@ keybinds {
 "#;
 
 const NEW_LABEL: &str = "＋ new";
+/// ＋ new を押すと出す選択肢。名前と flock new の --agent に当たる値
+const AGENTS: [(&str, Option<&str>); 2] = [("claude", None), ("Antigravity", Some("agy"))];
 const HINT: &str = "Alt+j/k move · Alt+g log";
 /// working のアイコンをこの順に回す
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -74,6 +76,8 @@ struct State {
     frame: usize,
     /// アイコンを回すタイマーを仕掛けている
     spinning: bool,
+    /// ＋ new を押して、起動するエージェントの選択肢を出している
+    choosing: bool,
 }
 
 register_plugin!(State);
@@ -133,10 +137,7 @@ impl ZellijPlugin for State {
                 self.open_detail(line);
                 return false;
             }
-            Event::Mouse(Mouse::LeftClick(line, _)) => {
-                self.focus_line(line);
-                return false;
-            }
+            Event::Mouse(Mouse::LeftClick(line, _)) => return self.focus_line(line),
             // 詳細は less を閉じたらペインごと閉じる。閉じないと終了したペインが残る
             Event::CommandPaneExited(pane_id, _, context) if context.contains_key(DETAIL) => {
                 close_terminal_pane(pane_id);
@@ -254,6 +255,9 @@ impl ZellijPlugin for State {
         // 一覧との間を1行あける
         body.push(String::new());
         body.push(format!(" {BOLD}{NEW_LABEL}{RESET}"));
+        if self.choosing {
+            body.extend(AGENTS.iter().map(|(name, _)| format!("    {name}")));
+        }
         let mut lines = boxed(&format!("{BOLD}Agents{RESET}"), GREEN, &body, cols, rows.saturating_sub(1));
         lines.push(format!(" {DIM}{}{RESET}", truncate(HINT, cols.saturating_sub(1))));
         // 最後の行で改行すると1行ずれる
@@ -358,19 +362,29 @@ impl State {
         shown.map(|id| (id, title))
     }
 
-    fn focus_line(&self, line: isize) {
+    /// 押した行に応じて動かす。選択肢の開け閉めで描き直しが要るなら true
+    fn focus_line(&mut self, line: isize) -> bool {
+        let was_choosing = std::mem::take(&mut self.choosing);
         // 上の枠の1行ぶんずらす
         let Ok(index) = usize::try_from(line - 1) else {
-            return;
+            return was_choosing;
         };
         let lines = self.model.lines();
+        // 一覧、空き行、＋ new、選択肢の順に並ぶ
+        let new_line = lines.len() + 1;
         match lines.get(index) {
             Some(Line::Agent(row)) => focus_terminal_pane(row.pane_id, false, false),
             // switch_tab_to は1始まり
             Some(Line::Tab { position, .. }) => switch_tab_to(*position as u32 + 1),
-            None if index == lines.len() + 1 => self.open_new_tab(None, None, None),
-            _ => {}
+            None if index == new_line => self.choosing = !was_choosing,
+            None if was_choosing => {
+                if let Some((_, agent)) = index.checked_sub(new_line + 1).and_then(|i| AGENTS.get(i)) {
+                    self.open_new_tab(None, None, *agent);
+                }
+            }
+            None => {}
         }
+        was_choosing || self.choosing
     }
 
     fn run(&self, message: &PipeMessage, focused: PaneId) {

@@ -7,7 +7,7 @@ A zellij sidebar that shows the state of the coding agents running in each pane.
 - Rows are ordered by tab position, then by pane creation order. They don't move when a state changes.
 - States: `⠋` working / `●` blocked (Claude Code only) / `✓` done (finished while you weren't looking) / `○` idle
 - States come from the agents' hooks through `zellij pipe`. Only panes that have reported a state are listed.
-- Click a row to jump to that pane. Click a tab name to switch to that tab. `＋ new` opens a new tab in the current pane's folder and starts Claude Code there.
+- Click a row to jump to that pane. Click a tab name to switch to that tab. `＋ new` lets you pick Claude Code or Antigravity and starts it in a new tab in the current pane's folder.
 - `Alt+j` / `Alt+k` move to the next / previous agent (only inside a flock session; use `Alt+↓` / `Alt+↑` to move between panes vertically).
 - The right side shows the focused agent's prompts and actions (tools and the files or commands they touched) with timestamps. Click a row to open the full prompt or the tool's input and output (`q` to close). `Alt+g` toggles it.
 
