@@ -348,16 +348,8 @@ impl State {
         let lines = self.model.lines();
         match lines.get(index) {
             Some(Line::Agent(row)) => focus_terminal_pane(row.pane_id, false, false),
-            // タブ名を押したら、そのタブへ切り替えて名前の入力状態にする（Ctrl+t → r と同じ）。
-            // 右クリックは zellij がプラグインに渡さないので左クリックにしている
-            Some(Line::Tab { position, .. }) => {
-                // switch_tab_to と rename_tab は1始まり
-                let tab = *position as u32 + 1;
-                switch_tab_to(tab);
-                // 入力状態に入った時点の名前が Esc で戻す先になるので、空にするのはその後
-                switch_to_input_mode(&InputMode::RenameTab);
-                rename_tab(tab, "");
-            }
+            // switch_tab_to は1始まり
+            Some(Line::Tab { position, .. }) => switch_tab_to(*position as u32 + 1),
             None if index == lines.len() + 1 => self.open_new_tab(None, None),
             _ => {}
         }
