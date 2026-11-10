@@ -143,6 +143,15 @@ impl Model {
         self.logs.retain(|id, _| self.panes.iter().any(|p| p.id == *id));
         self.sessions
             .retain(|id, _| self.panes.iter().any(|p| p.id == *id));
+        // Antigravity CLI は会話を再開しても指示を受けるまでフックを呼ばないので、復元したペインは起動コマンドから拾う
+        for pane in &self.panes {
+            if let Some(id) = pane.title.strip_prefix("sh -c exec agy --conversation ") {
+                self.statuses.entry(pane.id).or_insert(Status::Idle);
+                self.sessions
+                    .entry(pane.id)
+                    .or_insert_with(|| format!("agy:{}", id.trim_matches('\'')));
+            }
+        }
         for pane in self.panes.iter().filter(|p| p.focused) {
             if let Some(status) = self.statuses.get_mut(&pane.id) {
                 if *status == Status::Done {
@@ -543,5 +552,15 @@ mod tests {
     fn 起動コマンドのタイトルはコマンド名だけ() {
         assert_eq!(display_title("sh -c exec agy --conversation 'c1'"), "agy");
         assert_eq!(display_title("✳ Fix bug"), "✳ Fix bug");
+    }
+
+    #[test]
+    fn 復元した_antigravity_は報告がなくても待機中で出す() {
+        let mut m = model();
+        let mut agy = pane(7, 0, false);
+        agy.title = "sh -c exec agy --conversation 'c1'".into();
+        m.set_panes(vec![agy]);
+        assert_eq!(m.status(7), Some(Status::Idle));
+        assert_eq!(m.saved_tabs()[0].session.as_deref(), Some("agy:c1"));
     }
 }
