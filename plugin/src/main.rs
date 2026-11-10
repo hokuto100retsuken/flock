@@ -33,6 +33,9 @@ keybinds {
 
 const NEW_LABEL: &str = "＋ new";
 const HINT: &str = "Alt+j/k move · Alt+g log";
+/// working のアイコンをこの順に回す
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPIN_SECONDS: f64 = 0.1;
 /// 右側のログの幅。レイアウトの size と合わせる
 const LOG_WIDTH: usize = 40;
 /// 戻したログを LOG_WIDTH まで縮めるときに、縮める回数の上限
@@ -67,6 +70,10 @@ struct State {
     session_name: Option<String>,
     /// 最後に書き出したタブの並び。変わったときだけ書き出す
     saved_tabs: String,
+    /// working のアイコンの何コマ目か
+    frame: usize,
+    /// アイコンを回すタイマーを仕掛けている
+    spinning: bool,
 }
 
 register_plugin!(State);
@@ -91,6 +98,7 @@ impl ZellijPlugin for State {
             EventType::Mouse,
             EventType::CommandPaneExited,
             EventType::ModeUpdate,
+            EventType::Timer,
         ]);
     }
 
@@ -113,6 +121,11 @@ impl ZellijPlugin for State {
             Event::ModeUpdate(mode) => {
                 self.session_name = mode.session_name;
                 return false;
+            }
+            Event::Timer(_) => {
+                self.spinning = false;
+                self.frame += 1;
+                return self.model.any_working();
             }
             // 権限の確認ダイアログに答えられるよう、許可されるまではフォーカスできるままにする
             Event::PermissionRequestResult(PermissionStatus::Granted) => set_selectable(false),
@@ -210,6 +223,11 @@ impl ZellijPlugin for State {
     }
 
     fn render(&mut self, rows: usize, cols: usize) {
+        // working がいる間だけ描き直し続ける。見えていないタブは描かれないので回らない
+        if self.model.any_working() && !self.spinning {
+            self.spinning = true;
+            set_timeout(SPIN_SECONDS);
+        }
         if self.log_view {
             return self.render_log(rows, cols);
         }
@@ -223,7 +241,7 @@ impl ZellijPlugin for State {
                 }
                 Line::Agent(row) => {
                     number += 1;
-                    let (icon, color) = status_style(row.status);
+                    let (icon, color) = status_style(row.status, self.frame);
                     let title = truncate(&row.title, inner.saturating_sub(7));
                     body.push(if self.model.is_focused(row.pane_id) {
                         selected(&format!(" {number:>2} {color}{icon}{RESET} {BOLD}{title}{RESET}"), inner)
@@ -255,7 +273,7 @@ impl State {
             let (icon, color) = self
                 .model
                 .status(pane_id)
-                .map(status_style)
+                .map(|s| status_style(s, self.frame))
                 .unwrap_or(("○", ""));
             title = format!("{color}{icon}{RESET} {BOLD}{}{RESET}", truncate(&name, inner.saturating_sub(5)));
             let entries: Vec<_> = self.model.log(pane_id).collect();
@@ -518,9 +536,9 @@ impl State {
     }
 }
 
-fn status_style(status: Status) -> (&'static str, &'static str) {
+fn status_style(status: Status, frame: usize) -> (&'static str, &'static str) {
     match status {
-        Status::Working => ("⠋", "\u{1b}[36m"),
+        Status::Working => (SPINNER[frame % SPINNER.len()], "\u{1b}[36m"),
         Status::Blocked => ("●", "\u{1b}[31m"),
         Status::Done => ("✓", "\u{1b}[32m"),
         Status::Idle => ("○", "\u{1b}[90m"),

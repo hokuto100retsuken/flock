@@ -212,6 +212,10 @@ impl Model {
         self.statuses.get(&pane_id).copied()
     }
 
+    pub fn any_working(&self) -> bool {
+        self.statuses.values().any(|s| *s == Status::Working)
+    }
+
     /// 他のタブのサイドバーへ渡す形。1行に1件、タブ区切り
     /// （`s 3 working` で状態、`c 3 <会話の ID>` で会話、`l 3 12:03 <詳細のファイル> Edit main.rs` でログ）
     pub fn export(&self) -> String {
