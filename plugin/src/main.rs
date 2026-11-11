@@ -483,14 +483,16 @@ impl State {
             r#"layout {{
     tab name={name} cwd={cwd} focus=true {{
         pane split_direction="vertical" {{
-            pane size=32 borderless=true {{
-                plugin location={url} {{ {config}}}
-            }}
             pane command="sh" focus=true close_on_exit=true {{
                 args "-c" {command}
             }}
-            pane size={LOG_WIDTH} borderless=true {{
-                plugin location={url} {{ {config}mode "log"; }}
+            pane size={LOG_WIDTH} split_direction="horizontal" {{
+                pane borderless=true {{
+                    plugin location={url} {{ {config}mode "log"; }}
+                }}
+                pane borderless=true {{
+                    plugin location={url} {{ {config}}}
+                }}
             }}
         }}
         pane size=1 borderless=true {{

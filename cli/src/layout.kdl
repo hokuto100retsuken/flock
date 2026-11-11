@@ -2,15 +2,17 @@
 layout {
     default_tab_template {
         pane split_direction="vertical" {
-            pane size=32 borderless=true {
-                plugin location={plugin} {
-                    claude_command {claude_command}
-                }
-            }
             children
-            pane size=40 borderless=true {
-                plugin location={plugin} {
-                    mode "log"
+            pane size=40 split_direction="horizontal" {
+                pane borderless=true {
+                    plugin location={plugin} {
+                        mode "log"
+                    }
+                }
+                pane borderless=true {
+                    plugin location={plugin} {
+                        claude_command {claude_command}
+                    }
                 }
             }
         }
@@ -21,15 +23,17 @@ layout {
     // default_tab_template だけだと、後から開いたタブの children がペインにならず空のタブになる
     new_tab_template {
         pane split_direction="vertical" {
-            pane size=32 borderless=true {
-                plugin location={plugin} {
-                    claude_command {claude_command}
-                }
-            }
             pane
-            pane size=40 borderless=true {
-                plugin location={plugin} {
-                    mode "log"
+            pane size=40 split_direction="horizontal" {
+                pane borderless=true {
+                    plugin location={plugin} {
+                        mode "log"
+                    }
+                }
+                pane borderless=true {
+                    plugin location={plugin} {
+                        claude_command {claude_command}
+                    }
                 }
             }
         }
