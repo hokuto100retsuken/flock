@@ -249,6 +249,8 @@ impl ZellijPlugin for State {
         if self.log_view {
             return self.render_log(rows, cols);
         }
+        // 隠れていたタブに切り替わると、古いフォーカスのまま描かれるので描く前に聞き直す
+        self.sync();
         let inner = cols.saturating_sub(2);
         // 上の枠の1行ぶんずらす
         let hovered = self.hover.and_then(|line| line.checked_sub(1));
@@ -523,11 +525,15 @@ impl State {
     }
 
     fn sync(&mut self) {
-        // 隠れているタブのサイドバーにはタブの更新が届かないので、見ているタブは zellij に聞く
-        let active_tab = get_focused_pane_info()
-            .ok()
+        // 隠れているタブのサイドバーにはタブやペインの更新が届かないので、見ているペインは zellij に聞く
+        let focused = get_focused_pane_info().ok();
+        let active_tab = focused
             .map(|(tab, _)| tab)
             .or_else(|| self.tabs.iter().find(|t| t.active).map(|t| t.position));
+        let focused_terminal = match focused {
+            Some((_, PaneId::Terminal(id))) => Some(id),
+            _ => None,
+        };
         let panes = self
             .manifest
             .iter()
@@ -541,7 +547,10 @@ impl State {
                         tab_position: *tab_position,
                         title: p.title.clone(),
                         command: p.terminal_command.clone().unwrap_or_default(),
-                        focused: p.is_focused && active_tab == Some(*tab_position),
+                        focused: match focused_terminal {
+                            Some(id) => p.id == id,
+                            None => p.is_focused && active_tab == Some(*tab_position),
+                        },
                     })
             })
             .collect();
