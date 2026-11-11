@@ -9,6 +9,7 @@ use zellij_tile::prelude::*;
 const PIPE_NAME: &str = "flock";
 const SYNC_REQUEST: &str = "flock-sync-request";
 const SYNC: &str = "flock-sync";
+const SEEN: &str = "flock-seen";
 const NEW: &str = "flock-new";
 const NEXT: &str = "flock-next";
 const PREV: &str = "flock-prev";
@@ -168,6 +169,10 @@ impl ZellijPlugin for State {
                         .with_payload(self.model.export()),
                 );
                 return false;
+            }
+            (SEEN, PipeSource::Plugin(from)) if *from != self.plugin_id => {
+                let pane_id = message.payload.as_deref().and_then(|p| p.parse().ok());
+                return pane_id.is_some_and(|id| self.model.seen(id));
             }
             (SYNC, _) => {
                 self.model.import(message.payload.as_deref().unwrap_or_default());
@@ -532,7 +537,10 @@ impl State {
                     })
             })
             .collect();
-        self.model.set_panes(panes);
+        // 隠れているタブのサイドバーには、タブを切り替えても更新が届かないことがあるので、見たことを知らせる
+        for pane_id in self.model.set_panes(panes) {
+            pipe_message_to_plugin(MessageToPlugin::new(SEEN).with_payload(pane_id.to_string()));
+        }
         self.model.set_tabs(
             self.tabs
                 .iter()

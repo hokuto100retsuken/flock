@@ -138,7 +138,8 @@ impl Model {
         self.statuses.insert(pane_id, status);
     }
 
-    pub fn set_panes(&mut self, panes: Vec<Pane>) {
+    /// フォーカスしたので待機中に戻したペインを返す
+    pub fn set_panes(&mut self, panes: Vec<Pane>) -> Vec<u32> {
         self.panes = panes;
         self.statuses
             .retain(|id, _| self.panes.iter().any(|p| p.id == *id));
@@ -153,13 +154,17 @@ impl Model {
                 self.sessions.entry(pane.id).or_insert(session);
             }
         }
-        for pane in self.panes.iter().filter(|p| p.focused) {
-            if let Some(status) = self.statuses.get_mut(&pane.id) {
-                if *status == Status::Done {
-                    *status = Status::Idle;
-                }
-            }
+        let focused: Vec<u32> = self.panes.iter().filter(|p| p.focused).map(|p| p.id).collect();
+        focused.into_iter().filter(|id| self.seen(*id)).collect()
+    }
+
+    /// 終わったのを見たので待機中に戻す。戻したら true
+    pub fn seen(&mut self, pane_id: u32) -> bool {
+        let done = self.statuses.get(&pane_id) == Some(&Status::Done);
+        if done {
+            self.statuses.insert(pane_id, Status::Idle);
         }
+        done
     }
 
     pub fn set_tabs(&mut self, tabs: Vec<Tab>) {
@@ -537,8 +542,11 @@ mod tests {
     fn doneはフォーカスするとidleになる() {
         let mut m = model();
         m.apply(3, Report::Stop);
-        m.set_panes(vec![pane(5, 1, false), pane(3, 0, true), pane(1, 0, false)]);
+        let seen = m.set_panes(vec![pane(5, 1, false), pane(3, 0, true), pane(1, 0, false)]);
         assert_eq!(m.groups()[0].rows[0].status, Status::Idle);
+        // 他のタブのサイドバーに知らせるのは、戻したペインだけ
+        assert_eq!(seen, vec![3]);
+        assert!(m.set_panes(vec![pane(5, 1, false), pane(3, 0, true), pane(1, 0, false)]).is_empty());
     }
 
     #[test]
