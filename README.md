@@ -2,7 +2,7 @@
 
 A zellij sidebar that shows the state of the coding agents running in each pane. Works with [Claude Code](https://claude.com/claude-code) and Antigravity CLI (`agy`).
 
-![Agent list on the left, Claude Code in the middle, and the focused agent's log on the right](docs/screenshot.png)
+![Claude Code on the left, the focused agent's log at the top right, and the agent list at the bottom right](docs/screenshot.png)
 
 - The right column shows the log at the top and the agent list at the bottom. The pane you work in is on the left.
 - The agent list shows every tab and every pane in it. Rows are ordered by tab position, then by pane creation order. They don't move when a state changes.
