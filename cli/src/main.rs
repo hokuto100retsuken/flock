@@ -4,7 +4,7 @@ mod setup;
 
 use std::{
     env,
-    os::unix::process::CommandExt,
+    fs,
     path::PathBuf,
     process::{Command, ExitCode, Stdio},
     thread,
@@ -58,30 +58,52 @@ fn start() -> Result {
         return Err("cannot start inside zellij; use flock new to open a new tab".into());
     }
     let session = session();
+    match session_state(&session)? {
+        Some(layout::SessionState::Running) => {
+            return run_zellij(Command::new("zellij").args(["attach", &session]), &session)
+        }
+        // 終了済みのセッションを復元すると、そのときのレイアウトと設定のまま戻ってしまうので作り直す
+        Some(layout::SessionState::Exited) => delete_session(&session)?,
+        None => {}
+    }
+    let layout = layout::write(&session)?;
+    run_zellij(
+        Command::new("zellij")
+            .args(["--session", &session, "--new-session-with-layout"])
+            .arg(layout),
+        &session,
+    )
+}
+
+/// zellij の終了を待ち、最後のタブを閉じて終わったのなら次は空で始まるようタブの並びを消す。
+/// Ctrl+q で終わるとセッションは一覧から消え、最後のタブを閉じて終わると EXITED で残る
+fn run_zellij(command: &mut Command, session: &str) -> Result {
+    command.status().map_err(|e| format!("cannot start zellij: {e}"))?;
+    if session_state(session)? == Some(layout::SessionState::Exited) {
+        delete_session(session)?;
+        let tabs = state_dir().join(format!("{session}.tabs"));
+        if tabs.exists() {
+            fs::remove_file(&tabs).map_err(|e| format!("{}: {e}", tabs.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn session_state(session: &str) -> Result<Option<layout::SessionState>> {
     let listed = Command::new("zellij")
         .args(["list-sessions", "--no-formatting"])
         .output()
         .map_err(|e| format!("cannot start zellij: {e}"))?;
-    match layout::session_state(&String::from_utf8_lossy(&listed.stdout), &session) {
-        Some(layout::SessionState::Running) => {
-            return Err(Command::new("zellij").args(["attach", &session]).exec().to_string())
-        }
-        // 終了済みのセッションを復元すると、そのときのレイアウトと設定のまま戻ってしまうので作り直す
-        Some(layout::SessionState::Exited) => {
-            Command::new("zellij")
-                .args(["delete-session", &session])
-                .stdout(Stdio::null())
-                .status()
-                .map_err(|e| e.to_string())?;
-        }
-        None => {}
-    }
-    let layout = layout::write(&session)?;
-    Err(Command::new("zellij")
-        .args(["--session", &session, "--new-session-with-layout"])
-        .arg(layout)
-        .exec()
-        .to_string())
+    Ok(layout::session_state(&String::from_utf8_lossy(&listed.stdout), session))
+}
+
+fn delete_session(session: &str) -> Result {
+    Command::new("zellij")
+        .args(["delete-session", session])
+        .stdout(Stdio::null())
+        .status()
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn new(args: &[String]) -> Result {

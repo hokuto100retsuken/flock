@@ -8,7 +8,7 @@ const PLUGIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/flock.wasm"));
 #[derive(Debug, PartialEq, Eq)]
 pub enum SessionState {
     Running,
-    /// Ctrl+q などで終了し、復元を待っている
+    /// 最後のタブを閉じて終了し、復元を待っている
     Exited,
 }
 
