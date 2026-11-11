@@ -225,6 +225,8 @@ impl ZellijPlugin for State {
                 let mut field = || fields.next().unwrap_or_default();
                 let (time, file, detail) = (field(), field(), field());
                 self.model.record(pane_id, &report, time, file, detail);
+                // 見ている最中に終わったかを、今フォーカスしているペインで決める
+                self.sync();
                 self.model.apply(pane_id, report);
                 self.save_tabs();
                 true
@@ -508,7 +510,11 @@ impl State {
     }
 
     fn sync(&mut self) {
-        let active_tab = self.tabs.iter().find(|t| t.active).map(|t| t.position);
+        // 隠れているタブのサイドバーにはタブの更新が届かないので、見ているタブは zellij に聞く
+        let active_tab = get_focused_pane_info()
+            .ok()
+            .map(|(tab, _)| tab)
+            .or_else(|| self.tabs.iter().find(|t| t.active).map(|t| t.position));
         let panes = self
             .manifest
             .iter()
