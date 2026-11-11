@@ -1,6 +1,6 @@
 [package]
 name = "flock"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 license = "MIT"
 description = "Watch Claude Code agents side by side in zellij"
