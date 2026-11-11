@@ -84,6 +84,8 @@ fn start(fresh: bool) -> Result {
     Err(Command::new("zellij")
         .args(["--session", &session, "--new-session-with-layout"])
         .arg(layout)
+        // 既定の titles はサイドバーとの境目にも線を引くので、枠なしのペインに線を引かない full にする
+        .args(["options", "--pane-frame-style", "full"])
         .exec()
         .to_string())
 }
