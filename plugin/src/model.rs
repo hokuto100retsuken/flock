@@ -74,7 +74,8 @@ pub struct Tab {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     pub pane_id: u32,
-    pub status: Status,
+    /// エージェントが動いていないペインは None
+    pub status: Option<Status>,
     pub title: String,
 }
 
@@ -106,7 +107,7 @@ pub struct SavedTab {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Line {
     Tab { position: usize, name: String },
-    Agent(Row),
+    Row(Row),
 }
 
 #[derive(Default)]
@@ -287,28 +288,23 @@ impl Model {
         let mut tabs = self.tabs.clone();
         tabs.sort_by_key(|t| t.position);
         tabs.into_iter()
-            .filter_map(|tab| {
+            .map(|tab| {
                 let mut rows: Vec<Row> = self
                     .panes
                     .iter()
                     .filter(|p| p.tab_position == tab.position)
-                    .filter_map(|p| {
-                        self.statuses.get(&p.id).map(|status| Row {
-                            pane_id: p.id,
-                            status: *status,
-                            title: display_title(&p.title),
-                        })
+                    .map(|p| Row {
+                        pane_id: p.id,
+                        status: self.statuses.get(&p.id).copied(),
+                        title: display_title(&p.title),
                     })
                     .collect();
-                if rows.is_empty() {
-                    return None;
-                }
                 rows.sort_by_key(|r| r.pane_id);
-                Some(Group {
+                Group {
                     tab_position: tab.position,
                     tab_name: tab.name,
                     rows,
-                })
+                }
             })
             .collect()
     }
@@ -322,7 +318,7 @@ impl Model {
                     position: group.tab_position,
                     name: group.tab_name,
                 })
-                    .chain(group.rows.into_iter().map(Line::Agent))
+                    .chain(group.rows.into_iter().map(Line::Row))
             })
             .collect()
     }
@@ -351,7 +347,7 @@ impl Model {
     fn agent_ids(&self) -> Vec<u32> {
         self.groups()
             .into_iter()
-            .flat_map(|g| g.rows.into_iter().map(|r| r.pane_id))
+            .flat_map(|g| g.rows.into_iter().filter(|r| r.status.is_some()).map(|r| r.pane_id))
             .collect()
     }
 
@@ -402,7 +398,10 @@ mod tests {
     }
 
     fn ids(m: &Model) -> Vec<u32> {
-        m.groups().iter().flat_map(|g| g.rows.iter().map(|r| r.pane_id)).collect()
+        m.groups()
+            .iter()
+            .flat_map(|g| g.rows.iter().filter(|r| r.status.is_some()).map(|r| r.pane_id))
+            .collect()
     }
 
     #[test]
@@ -418,15 +417,17 @@ mod tests {
     }
 
     #[test]
-    fn 状態を報告していないペインは出さない() {
+    fn 状態を報告していないペインも状態なしで出す() {
         let mut m = model();
         m.apply(3, Report::Working);
-        assert_eq!(ids(&m), vec![3]);
-        assert_eq!(m.groups()[0].tab_name, "a");
+        let rows = &m.groups()[0].rows;
+        assert_eq!(rows.iter().map(|r| r.pane_id).collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(rows[0].status, None);
+        assert_eq!(rows[1].status, Some(Status::Working));
     }
 
     #[test]
-    fn 行はタブ見出しの下にそのタブのエージェントが続く() {
+    fn 行はタブ見出しの下にそのタブのペインが続く() {
         let mut m = model();
         m.apply(5, Report::Working);
         m.apply(3, Report::Working);
@@ -435,10 +436,10 @@ mod tests {
             .iter()
             .map(|l| match l {
                 Line::Tab { .. } => None,
-                Line::Agent(row) => Some(row.pane_id),
+                Line::Row(row) => Some(row.pane_id),
             })
             .collect();
-        assert_eq!(lines, vec![None, Some(3), None, Some(5)]);
+        assert_eq!(lines, vec![None, Some(1), Some(3), None, Some(5)]);
     }
 
     #[test]
@@ -479,7 +480,7 @@ mod tests {
         to.apply(5, Report::Working);
         to.import(&from.export());
         let statuses: Vec<Status> = to.lines().iter().filter_map(|l| match l {
-            Line::Agent(row) => Some(row.status),
+            Line::Row(row) => row.status,
             Line::Tab { .. } => None,
         }).collect();
         assert_eq!(statuses, vec![Status::Working, Status::Working]);
@@ -534,8 +535,8 @@ mod tests {
         m.apply(1, Report::Stop);
         m.apply(3, Report::Stop);
         let rows = &m.groups()[0].rows;
-        assert_eq!(rows[0].status, Status::Idle);
-        assert_eq!(rows[1].status, Status::Done);
+        assert_eq!(rows[0].status, Some(Status::Idle));
+        assert_eq!(rows[1].status, Some(Status::Done));
     }
 
     #[test]
@@ -543,19 +544,20 @@ mod tests {
         let mut m = model();
         m.apply(3, Report::Stop);
         let seen = m.set_panes(vec![pane(5, 1, false), pane(3, 0, true), pane(1, 0, false)]);
-        assert_eq!(m.groups()[0].rows[0].status, Status::Idle);
+        assert_eq!(m.groups()[0].rows[1].status, Some(Status::Idle));
         // 他のタブのサイドバーに知らせるのは、戻したペインだけ
         assert_eq!(seen, vec![3]);
         assert!(m.set_panes(vec![pane(5, 1, false), pane(3, 0, true), pane(1, 0, false)]).is_empty());
     }
 
     #[test]
-    fn endを受けたペインは一覧から消える() {
+    fn endを受けたペインは状態なしに戻る() {
         let mut m = model();
         m.apply(1, Report::Working);
         m.apply(3, Report::Working);
         m.apply(1, Report::End);
-        assert_eq!(ids(&m), vec![3]);
+        assert_eq!(m.groups()[0].rows[0].status, None);
+        assert_eq!(m.nth(1), Some(3));
     }
 
     #[test]

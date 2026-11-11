@@ -259,17 +259,23 @@ impl ZellijPlugin for State {
                 Line::Tab { name, .. } => {
                     body.push(format!(" {BOLD}{}{RESET}", truncate(&name, inner.saturating_sub(1))))
                 }
-                Line::Agent(row) => {
-                    number += 1;
-                    let (icon, color) = status_style(row.status, self.frame);
+                Line::Row(row) => {
+                    // 番号は flock focus N で選べるエージェントにだけ振る
+                    let (label, (icon, color)) = match row.status {
+                        Some(status) => {
+                            number += 1;
+                            (format!("{number:>2}"), status_style(status, self.frame))
+                        }
+                        None => ("  ".to_owned(), ("-", DIM)),
+                    };
                     let title = truncate(&row.title, inner.saturating_sub(7));
                     let focused = self.model.is_focused(row.pane_id);
                     body.push(if focused && hovered != Some(body.len()) {
-                        paint(&format!(" {number:>2} {color}{icon}{RESET} {BOLD}{title}{RESET}"), inner, SELECTED)
+                        paint(&format!(" {label} {color}{icon}{RESET} {BOLD}{title}{RESET}"), inner, SELECTED)
                     } else if focused {
-                        format!(" {number:>2} {color}{icon}{RESET} {BOLD}{title}{RESET}")
+                        format!(" {label} {color}{icon}{RESET} {BOLD}{title}{RESET}")
                     } else {
-                        format!(" {DIM}{number:>2}{RESET} {color}{icon}{RESET} {DIM}{title}{RESET}")
+                        format!(" {DIM}{label}{RESET} {color}{icon}{RESET} {DIM}{title}{RESET}")
                     });
                 }
             }
@@ -405,7 +411,7 @@ impl State {
         // 一覧、空き行、＋ new、選択肢の順に並ぶ
         let new_line = lines.len() + 1;
         match lines.get(index) {
-            Some(Line::Agent(row)) => focus_terminal_pane(row.pane_id, false, false),
+            Some(Line::Row(row)) => focus_terminal_pane(row.pane_id, false, false),
             // switch_tab_to は1始まり
             Some(Line::Tab { position, .. }) => switch_tab_to(*position as u32 + 1),
             None if index == new_line => self.choosing = !was_choosing,
