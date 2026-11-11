@@ -5,6 +5,7 @@ mod setup;
 use std::{
     env,
     fs,
+    os::unix::process::CommandExt,
     path::PathBuf,
     process::{Command, ExitCode, Stdio},
     thread,
@@ -14,6 +15,7 @@ use std::{
 const USAGE: &str = "\
 Usage:
   flock              start; reattach if running, or reopen the previous tabs with their conversations if it was quit
+  flock --fresh      start with a single empty tab instead of reopening the previous tabs
   flock new [DIR] [--name NAME] [--agent claude|agy]
                      start Claude Code (or Antigravity CLI with --agent agy) in a new tab
                      (DIR defaults to the current folder, NAME to the folder name)
@@ -27,7 +29,8 @@ type Result<T = ()> = std::result::Result<T, String>;
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
-        None => start(),
+        None => start(false),
+        Some("--fresh") => start(true),
         Some("new") => new(&args[1..]),
         Some("focus") => match args.get(1) {
             Some(n) => Ok(pipe("flock-focus", Some(&format!("n={n}")), "flock-focus")),
@@ -53,40 +56,36 @@ fn main() -> ExitCode {
     }
 }
 
-fn start() -> Result {
+fn start(fresh: bool) -> Result {
     if env::var_os("ZELLIJ").is_some() {
         return Err("cannot start inside zellij; use flock new to open a new tab".into());
     }
     let session = session();
     match session_state(&session)? {
+        Some(layout::SessionState::Running) if fresh => {
+            return Err("flock is running; quit it with Ctrl+q before starting fresh".into())
+        }
         Some(layout::SessionState::Running) => {
-            return run_zellij(Command::new("zellij").args(["attach", &session]), &session)
+            return Err(Command::new("zellij").args(["attach", &session]).exec().to_string())
         }
         // 終了済みのセッションを復元すると、そのときのレイアウトと設定のまま戻ってしまうので作り直す
         Some(layout::SessionState::Exited) => delete_session(&session)?,
         None => {}
     }
-    let layout = layout::write(&session)?;
-    run_zellij(
-        Command::new("zellij")
-            .args(["--session", &session, "--new-session-with-layout"])
-            .arg(layout),
-        &session,
-    )
-}
-
-/// zellij の終了を待ち、最後のタブを閉じて終わったのなら次は空で始まるようタブの並びを消す。
-/// Ctrl+q で終わるとセッションは一覧から消え、最後のタブを閉じて終わると EXITED で残る
-fn run_zellij(command: &mut Command, session: &str) -> Result {
-    command.status().map_err(|e| format!("cannot start zellij: {e}"))?;
-    if session_state(session)? == Some(layout::SessionState::Exited) {
-        delete_session(session)?;
+    // zellij は Ctrl+q で終えても最後のタブを閉じて終えても同じく EXITED で残し、終わり方では見分けられない。
+    // 空で始めるかは起動するときに決めてもらう
+    if fresh {
         let tabs = state_dir().join(format!("{session}.tabs"));
         if tabs.exists() {
             fs::remove_file(&tabs).map_err(|e| format!("{}: {e}", tabs.display()))?;
         }
     }
-    Ok(())
+    let layout = layout::write(&session)?;
+    Err(Command::new("zellij")
+        .args(["--session", &session, "--new-session-with-layout"])
+        .arg(layout)
+        .exec()
+        .to_string())
 }
 
 fn session_state(session: &str) -> Result<Option<layout::SessionState>> {
