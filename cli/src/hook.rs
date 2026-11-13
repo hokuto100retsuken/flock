@@ -143,14 +143,19 @@ fn line(s: &str) -> String {
         .collect()
 }
 
-/// 端末のタイムゾーンでの今の時刻
-struct Local(libc::tm);
+/// 端末のタイムゾーンでの時刻
+pub struct Local(libc::tm);
 
 impl Local {
     fn now() -> Local {
+        // SAFETY: time は引数が null なら戻り値で返すだけ
+        Local::at(unsafe { libc::time(std::ptr::null_mut()) })
+    }
+
+    /// UNIX 時刻（秒）から
+    pub fn at(time: libc::time_t) -> Local {
         // SAFETY: localtime_r は渡した tm に書き込むだけ
         unsafe {
-            let time = libc::time(std::ptr::null_mut());
             let mut tm = std::mem::zeroed();
             libc::localtime_r(&time, &mut tm);
             Local(tm)
@@ -159,6 +164,11 @@ impl Local {
 
     fn clock(&self) -> String {
         format!("{:02}:{:02}", self.0.tm_hour, self.0.tm_min)
+    }
+
+    /// 月/日 時:分
+    pub fn date_clock(&self) -> String {
+        format!("{:02}/{:02} {}", self.0.tm_mon + 1, self.0.tm_mday, self.clock())
     }
 
     fn stamp(&self) -> String {

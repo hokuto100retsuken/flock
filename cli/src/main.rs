@@ -1,3 +1,4 @@
+mod history;
 mod hook;
 mod layout;
 mod setup;
@@ -21,6 +22,7 @@ Usage:
                      (DIR defaults to the current folder, NAME to the folder name)
   flock focus N      move to agent N in the sidebar
   flock next|prev    move to the next / previous agent
+  flock history      list recent Claude Code and Antigravity conversations (used by the sidebar's Resume)
   flock setup        add the hooks that report state to the sidebar to your Claude Code and Antigravity CLI settings
   flock hook STATE   called from the agent's hooks (working|blocked|stop|idle|end)";
 
@@ -40,6 +42,7 @@ fn main() -> ExitCode {
             let name = format!("flock-{step}");
             Ok(pipe(&name, None, &name))
         }
+        Some("history") => history::run(),
         Some("setup") => setup::run(),
         Some("hook") => Ok(hook::run(args.get(1).map(String::as_str).unwrap_or_default())),
         _ => {
