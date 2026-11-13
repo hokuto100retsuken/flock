@@ -9,6 +9,7 @@ A zellij sidebar that shows the state of the coding agents running in each pane.
 - States: `⠋` working / `●` blocked (Claude Code only) / `✓` done (finished while you weren't looking) / `○` idle / `-` no agent running (a plain shell, for example)
 - States come from the agents' hooks through `zellij pipe`. Only panes running an agent get a number.
 - Click a row to jump to that pane. Click a tab name to switch to that tab. `＋ new` lets you pick Claude Code or Antigravity and starts it in a new tab in the current pane's folder.
+- `＋ new` → `Resume` opens a floating list of your 50 most recent Claude Code and Antigravity conversations across all folders, newest first. Type to filter by title or folder name, move with `↑` / `↓`, and press `Enter` (or click a row) to resume it in a new tab in its folder. `Esc` closes the list.
 - `Alt+j` / `Alt+k` move to the next / previous agent (only inside a flock session; use `Alt+↓` / `Alt+↑` to move between panes vertically).
 - The log shows the focused agent's prompts and actions (tools and the files or commands they touched) with timestamps. Click a row to open the full prompt or the tool's input and output (`q` to close). `Alt+g` toggles it.
 
@@ -40,6 +41,7 @@ flock              # start; reattach if running, or reopen the previous tabs wit
 flock --fresh      # start with a single empty tab instead of reopening the previous tabs
 flock new [DIR] [--name NAME] [--agent agy]  # start Claude Code (or Antigravity CLI) in a new tab (DIR defaults to the current folder, NAME to the folder name)
 flock focus N      # move to agent N in the sidebar
+flock history      # list recent Claude Code and Antigravity conversations (used by Resume)
 flock next|prev    # move to the next / previous agent
 ```
 
