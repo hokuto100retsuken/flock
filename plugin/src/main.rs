@@ -1,8 +1,10 @@
 mod model;
+mod resume;
 
 use std::collections::BTreeMap;
 
 use model::{display_title, Line, Model, Pane, Report, Status, Tab};
+use resume::{Agent, Conversation, Picker};
 use unicode_width::UnicodeWidthChar;
 use zellij_tile::prelude::*;
 
@@ -17,6 +19,8 @@ const FOCUS: &str = "flock-focus";
 const LOG_TOGGLE: &str = "flock-log-toggle";
 /// 詳細を開いたペインの目印
 const DETAIL: &str = "flock-detail";
+/// flock history の結果の目印
+const HISTORY: &str = "flock-history";
 
 /// タブの並びを書き出す。$1 がセッション名、$2 が中身。flock を起動し直すときに読む
 const SAVE_TABS: &str = r#"dir=${XDG_STATE_HOME:-$HOME/.local/state}/flock && mkdir -p "$dir" && printf '%s\n' "$2" >"$dir/$1.tabs""#;
@@ -35,7 +39,12 @@ keybinds {
 const NEW_LABEL: &str = "＋ new";
 /// ＋ new を押すと出す選択肢。名前と flock new の --agent に当たる値
 const AGENTS: [(&str, Option<&str>); 2] = [("Claude Code", None), ("Antigravity", Some("agy"))];
+/// エージェントの選択肢の後に出す、過去の会話を再開する選択肢
+const RESUME_LABEL: &str = "Resume";
 const HINT: &str = "Alt+j/k move · Alt+g log";
+const RESUME_HINT: &str = "type to filter · ↑↓ move · Enter resume · Esc close";
+/// 再開する会話の一覧で、フォルダ名に取る幅
+const FOLDER_WIDTH: usize = 14;
 /// working のアイコンをこの順に回す
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const SPIN_SECONDS: f64 = 0.1;
@@ -83,6 +92,18 @@ struct State {
     choosing: bool,
     /// マウスが乗っている行。zellij はペインから出たことを知らせないので、最後に乗った行のまま残る
     hover: Option<usize>,
+    /// 過去の会話を選んで再開する画面として動く。設定の mode "resume" で決まる
+    resume: Option<History>,
+    /// 再開する会話の一覧で、いちばん上に出している会話の位置と、出している件数
+    resume_top: usize,
+    resume_shown: usize,
+}
+
+enum History {
+    Loading,
+    /// flock history が失敗した。標準エラーの1行目
+    Failed(String),
+    Loaded(Picker),
 }
 
 register_plugin!(State);
@@ -91,6 +112,10 @@ impl ZellijPlugin for State {
     fn load(&mut self, configuration: BTreeMap<String, String>) {
         self.plugin_id = get_plugin_ids().plugin_id;
         self.log_view = configuration.get("mode").map(String::as_str) == Some("log");
+        if configuration.get("mode").map(String::as_str) == Some("resume") {
+            self.resume = Some(History::Loading);
+            subscribe(&[EventType::Key, EventType::RunCommandResult]);
+        }
         self.configuration = configuration;
         request_permission(&[
             PermissionType::ReadApplicationState,
@@ -112,6 +137,9 @@ impl ZellijPlugin for State {
     }
 
     fn update(&mut self, event: Event) -> bool {
+        if self.resume.is_some() {
+            return self.update_resume(event);
+        }
         match event {
             Event::PaneUpdate(manifest) => {
                 self.manifest = Some(manifest);
@@ -161,6 +189,13 @@ impl ZellijPlugin for State {
     }
 
     fn pipe(&mut self, message: PipeMessage) -> bool {
+        // 再開する画面はサイドバー向けの操作に加わらない。同じタブにいるので、加わると新しいタブを二重に開く
+        if self.resume.is_some() {
+            if let PipeSource::Cli(pipe_id) = &message.source {
+                unblock_cli_pipe_input(pipe_id);
+            }
+            return false;
+        }
         match (message.name.as_str(), &message.source) {
             (SYNC_REQUEST, PipeSource::Plugin(from)) if *from != self.plugin_id => {
                 pipe_message_to_plugin(
@@ -249,6 +284,9 @@ impl ZellijPlugin for State {
         if self.log_view {
             return self.render_log(rows, cols);
         }
+        if self.resume.is_some() {
+            return self.render_resume(rows, cols);
+        }
         // 隠れていたタブに切り替わると、古いフォーカスのまま描かれるので描く前に聞き直す
         self.sync();
         let inner = cols.saturating_sub(2);
@@ -287,7 +325,8 @@ impl ZellijPlugin for State {
         body.push(String::new());
         body.push(format!(" {BOLD}{NEW_LABEL}{RESET}"));
         if self.choosing {
-            body.extend(AGENTS.iter().map(|(name, _)| format!("    {name}")));
+            let choices = AGENTS.iter().map(|(name, _)| *name).chain([RESUME_LABEL]);
+            body.extend(choices.map(|name| format!("    {name}")));
         }
         if let Some(i) = hovered.filter(|&i| i != blank && i < body.len()) {
             body[i] = paint(&body[i], inner, HOVER);
@@ -344,14 +383,7 @@ impl State {
         };
         open_command_pane_floating(
             CommandToRun::new_with_args("less", vec!["-R", file]),
-            FloatingPaneCoordinates::new(
-                Some("10%".into()),
-                Some("10%".into()),
-                Some("80%".into()),
-                Some("80%".into()),
-                None,
-                None,
-            ),
+            floating_coordinates(),
             BTreeMap::from([(DETAIL.to_owned(), String::new())]),
         );
     }
@@ -417,11 +449,11 @@ impl State {
             // switch_tab_to は1始まり
             Some(Line::Tab { position, .. }) => switch_tab_to(*position as u32 + 1),
             None if index == new_line => self.choosing = !was_choosing,
-            None if was_choosing => {
-                if let Some((_, agent)) = index.checked_sub(new_line + 1).and_then(|i| AGENTS.get(i)) {
-                    self.open_new_tab(None, None, *agent);
-                }
-            }
+            None if was_choosing => match index.checked_sub(new_line + 1) {
+                Some(i) if i < AGENTS.len() => self.open_new_tab(None, None, AGENTS[i].1),
+                Some(i) if i == AGENTS.len() => self.open_resume(),
+                _ => {}
+            },
             None => {}
         }
         was_choosing || self.choosing
@@ -464,9 +496,6 @@ impl State {
         let Some(cwd) = cwd else {
             return;
         };
-        let Some(url) = self.own_pane().and_then(|(_, pane)| pane.plugin_url.clone()) else {
-            return;
-        };
         let name = name.unwrap_or_else(|| {
             cwd.rsplit('/')
                 .find(|s| !s.is_empty())
@@ -475,19 +504,25 @@ impl State {
         });
         let command = match agent {
             Some("agy") => "agy",
-            _ => self
-                .configuration
-                .get("claude_command")
-                .map(String::as_str)
-                .unwrap_or("claude"),
+            _ => self.claude_command(),
         };
+        self.open_tab(&name, &cwd, &format!("exec {command}"));
+    }
+
+    /// 新しいタブを開き、command を sh -c で動かす。開けたら true
+    fn open_tab(&self, name: &str, cwd: &str, command: &str) -> bool {
+        let Some(url) = self.own_pane().and_then(|(_, pane)| pane.plugin_url.clone()) else {
+            return false;
+        };
+        // 再開する画面から開くときも、新しいタブのプラグインはサイドバーとログとして動かす
         let config: String = self
             .configuration
             .iter()
+            .filter(|(k, _)| *k != "mode")
             .map(|(k, v)| format!("{k} {}; ", kdl_string(v)))
             .collect();
         // 新しいタブにもサイドバーを付けるので、レイアウトの default_tab_template と同じ形にする
-        new_tabs_with_layout(&format!(
+        let opened = new_tabs_with_layout(&format!(
             r#"layout {{
     tab name={name} cwd={cwd} focus=true {{
         pane split_direction="vertical" {{
@@ -508,11 +543,153 @@ impl State {
         }}
     }}
 }}"#,
-            name = kdl_string(&name),
-            cwd = kdl_string(&cwd),
+            name = kdl_string(name),
+            cwd = kdl_string(cwd),
             url = kdl_string(&url),
-            command = kdl_string(&format!("exec {command}")),
+            command = kdl_string(command),
         ));
+        !opened.is_empty()
+    }
+
+    fn claude_command(&self) -> &str {
+        self.configuration
+            .get("claude_command")
+            .map(String::as_str)
+            .unwrap_or("claude")
+    }
+
+    /// 過去の会話を選ぶ画面を、このプラグインを mode "resume" にしたフローティングペインで開く
+    fn open_resume(&self) {
+        let Some(url) = self.own_pane().and_then(|(_, pane)| pane.plugin_url.clone()) else {
+            return;
+        };
+        let mut config = self.configuration.clone();
+        config.insert("mode".to_owned(), "resume".to_owned());
+        // open_plugin_pane_floating は zellij 0.45.1 で返事が来ずにプラグインごと落ちるので、
+        // 返事を待たない「送り先がなければ起動する」メッセージで開く
+        let mut message = MessageToPlugin::new("flock-resume")
+            .with_plugin_url(url)
+            .with_plugin_config(config)
+            .new_plugin_instance_should_float(true)
+            .new_plugin_instance_should_be_focused();
+        if let Some(coordinates) = floating_coordinates() {
+            message = message.with_floating_pane_coordinates(coordinates);
+        }
+        pipe_message_to_plugin(message);
+    }
+
+    fn update_resume(&mut self, event: Event) -> bool {
+        match event {
+            Event::PaneUpdate(manifest) => {
+                self.manifest = Some(manifest);
+                // 権限が許可された後に届くので、ここで1回だけ一覧を取りに行く。
+                // 文字を打てるよう、サイドバーと違ってフォーカスできるままにする
+                if !self.initialized {
+                    self.initialized = true;
+                    let flock = self.configuration.get("flock_path").map(String::as_str).unwrap_or("flock");
+                    run_command(&[flock, "history"], BTreeMap::from([(HISTORY.to_owned(), String::new())]));
+                }
+                false
+            }
+            Event::RunCommandResult(exit_code, stdout, stderr, context) if context.contains_key(HISTORY) => {
+                self.resume = Some(if exit_code == Some(0) {
+                    History::Loaded(Picker::new(resume::parse(&String::from_utf8_lossy(&stdout))))
+                } else {
+                    let stderr = String::from_utf8_lossy(&stderr);
+                    History::Failed(stderr.lines().next().unwrap_or_default().to_owned())
+                });
+                true
+            }
+            Event::Key(key) => self.resume_key(key),
+            Event::Mouse(Mouse::LeftClick(line, _)) => {
+                // 上の枠と入力欄の2行ぶんずらす
+                let Some(index) = usize::try_from(line - 2).ok().filter(|&i| i < self.resume_shown) else {
+                    return false;
+                };
+                let conversation = match &self.resume {
+                    Some(History::Loaded(picker)) => picker.filtered().get(self.resume_top + index).map(|c| (*c).clone()),
+                    _ => None,
+                };
+                if let Some(conversation) = conversation {
+                    self.open_conversation(&conversation);
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// 押したキーに応じて動かす。描き直しが要るなら true
+    fn resume_key(&mut self, key: KeyWithModifier) -> bool {
+        if key.is_key_without_modifier(BareKey::Esc) {
+            close_self();
+            return false;
+        }
+        let Some(History::Loaded(picker)) = &mut self.resume else {
+            return false;
+        };
+        let typed = key.has_no_modifiers() || key.has_only_modifiers(&[KeyModifier::Shift]);
+        match key.bare_key {
+            BareKey::Enter if typed => {
+                if let Some(conversation) = picker.selected_entry().cloned() {
+                    self.open_conversation(&conversation);
+                }
+                return false;
+            }
+            BareKey::Up if typed => picker.move_by(-1),
+            BareKey::Down if typed => picker.move_by(1),
+            BareKey::Backspace if typed => picker.pop(),
+            BareKey::Char(c) if typed && !c.is_control() => picker.push(c),
+            _ => return false,
+        }
+        true
+    }
+
+    /// 会話のフォルダで新しいタブを開いて再開し、選ぶ画面を閉じる
+    fn open_conversation(&self, conversation: &Conversation) {
+        let command = conversation.command(self.claude_command());
+        if self.open_tab(&conversation.tab_name(), &conversation.cwd, &command) {
+            close_self();
+        }
+    }
+
+    fn render_resume(&mut self, rows: usize, cols: usize) {
+        let inner = cols.saturating_sub(2);
+        // 下に操作の案内を1行出すので、枠はその分低くする
+        let height = rows.saturating_sub(1);
+        // 枠の上下と入力欄を除いた、会話を出せる行数
+        let room = height.saturating_sub(3);
+        let mut body = Vec::new();
+        let (mut top, mut shown) = (0, 0);
+        match &self.resume {
+            Some(History::Loaded(picker)) if picker.is_empty() => body.push(format!(" {DIM}No conversations{RESET}")),
+            Some(History::Loaded(picker)) => {
+                body.push(format!(" {BOLD}>{RESET} {}", truncate(picker.query(), inner.saturating_sub(3))));
+                let conversations = picker.filtered();
+                let selected = picker.selected();
+                // 選んでいる会話が見える範囲に入るよう、はみ出したときだけずらす
+                top = self.resume_top.min(selected).max((selected + 1).saturating_sub(room));
+                for (i, conversation) in conversations.iter().enumerate().skip(top).take(room) {
+                    let line = resume_row(conversation, inner);
+                    body.push(if i == selected { paint(&line, inner, SELECTED) } else { line });
+                }
+                shown = body.len() - 1;
+                if conversations.is_empty() {
+                    body.push(format!(" {DIM}No matches{RESET}"));
+                }
+            }
+            Some(History::Failed(error)) => {
+                body.push(" Couldn't load history".to_owned());
+                body.push(format!(" {DIM}{}{RESET}", truncate(error, inner.saturating_sub(1))));
+            }
+            _ => body.push(format!(" {DIM}Loading…{RESET}")),
+        }
+        self.resume_top = top;
+        self.resume_shown = shown;
+        let mut lines = boxed(&format!("{BOLD}Resume{RESET}"), GREEN, &body, cols, height);
+        lines.push(format!(" {DIM}{}{RESET}", truncate(RESUME_HINT, cols.saturating_sub(1))));
+        // 最後の行で改行すると1行ずれる
+        print!("{}", lines.join("\n"));
     }
 
     fn own_pane(&self) -> Option<(usize, &PaneInfo)> {
@@ -618,6 +795,31 @@ fn status_style(status: Status, frame: usize) -> (&'static str, &'static str) {
         Status::Done => ("✓", "\u{1b}[32m"),
         Status::Idle => ("○", "\u{1b}[90m"),
     }
+}
+
+/// 再開する会話の1行。エージェント、日時、フォルダ名、タイトルの順で、フォルダ名までは桁を揃える
+fn resume_row(conversation: &Conversation, width: usize) -> String {
+    let agent = match conversation.agent {
+        Agent::Claude => "CC",
+        Agent::Agy => "agy",
+    };
+    let folder = truncate(conversation.folder(), FOLDER_WIDTH);
+    let folder = format!("{folder}{}", " ".repeat(FOLDER_WIDTH - visible_width(&folder)));
+    let head = format!(" {agent:<3} {DIM}{}{RESET} {folder} ", conversation.updated);
+    let title = truncate(&conversation.title, width.saturating_sub(visible_width(&head) + 1));
+    format!("{head}{title}")
+}
+
+/// フローティングペインを開く位置。画面の真ん中に、縦横 80% の大きさで
+fn floating_coordinates() -> Option<FloatingPaneCoordinates> {
+    FloatingPaneCoordinates::new(
+        Some("10%".into()),
+        Some("10%".into()),
+        Some("80%".into()),
+        Some("80%".into()),
+        None,
+        None,
+    )
 }
 
 fn kdl_string(s: &str) -> String {

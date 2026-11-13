@@ -7,11 +7,13 @@ layout {
                 pane borderless=true {
                     plugin location={plugin} {
                         mode "log"
+                        flock_path {flock_path}
                     }
                 }
                 pane borderless=true {
                     plugin location={plugin} {
                         claude_command {claude_command}
+                        flock_path {flock_path}
                     }
                 }
             }
@@ -28,11 +30,13 @@ layout {
                 pane borderless=true {
                     plugin location={plugin} {
                         mode "log"
+                        flock_path {flock_path}
                     }
                 }
                 pane borderless=true {
                     plugin location={plugin} {
                         claude_command {claude_command}
+                        flock_path {flock_path}
                     }
                 }
             }

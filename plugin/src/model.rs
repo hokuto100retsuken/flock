@@ -357,7 +357,7 @@ impl Model {
 }
 
 /// flock が復元のために起動したコマンドから会話の ID を読む
-fn resumed_session(command: &str) -> Option<String> {
+pub fn resumed_session(command: &str) -> Option<String> {
     if let Some((_, rest)) = command.split_once(" --conversation '") {
         return Some(format!("agy:{}", rest.split('\'').next()?));
     }

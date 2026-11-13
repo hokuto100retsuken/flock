@@ -38,14 +38,19 @@ pub fn write(session: &str) -> Result<PathBuf> {
     }
     let saved = fs::read_to_string(state_dir().join(format!("{session}.tabs"))).unwrap_or_default();
     let claude = env::var("FLOCK_CLAUDE_COMMAND").unwrap_or_else(|_| "claude".into());
+    // サイドバーが flock history を呼ぶのに使う。zellij の PATH にあるとは限らないので絶対パスで渡す
+    // リンクをたどると Homebrew の版ごとのパスになり、brew upgrade で消えるのでたどらない
+    let flock = env::current_exe()
+        .map(|exe| exe.display().to_string())
+        .unwrap_or_else(|_| "flock".into());
     let path = dir.join(format!("layout-{session}.kdl"));
-    fs::write(&path, render(&plugin.display().to_string(), &claude, &saved))
+    fs::write(&path, render(&plugin.display().to_string(), &claude, &flock, &saved))
         .map_err(|e| e.to_string())?;
     Ok(path)
 }
 
 /// saved は1行に1タブ「名前 タブ フォルダ タブ 会話の ID」
-fn render(plugin: &str, claude: &str, saved: &str) -> String {
+fn render(plugin: &str, claude: &str, flock: &str, saved: &str) -> String {
     let tabs: Vec<String> = saved
         .lines()
         .enumerate()
@@ -82,6 +87,7 @@ fn render(plugin: &str, claude: &str, saved: &str) -> String {
     TEMPLATE
         .replace("{plugin}", &kdl_string(&format!("file:{plugin}")))
         .replace("{claude_command}", &kdl_string(claude))
+        .replace("{flock_path}", &kdl_string(flock))
         .replace("{tabs}", &tabs)
 }
 
@@ -103,18 +109,19 @@ mod tests {
 
     #[test]
     fn 保存したタブは会話があれば続きから_なければシェルで開く() {
-        let kdl = render("/p/flock.wasm", "claude", "main\t/a\tabc\nAPI \"x\"\t/b\t\n");
+        let kdl = render("/p/flock.wasm", "claude", "/bin/flock", "main\t/a\tabc\nAPI \"x\"\t/b\t\n");
         assert!(kdl.contains("plugin location=\"file:/p/flock.wasm\""));
+        assert_eq!(kdl.matches("flock_path \"/bin/flock\"").count(), 4);
         assert!(kdl.contains(
             "    tab name=\"main\" cwd=\"/a\" focus=true {\n        pane command=\"sh\" close_on_exit=true {\n            args \"-c\" \"exec claude --resume 'abc'\"\n        }\n    }"
         ));
         assert!(kdl.contains("    tab name=\"API \\\"x\\\"\" cwd=\"/b\" {\n        pane\n    }"));
-        let agy = render("/p", "claude", "main\t/a\tagy:c1\n");
+        let agy = render("/p", "claude", "flock", "main\t/a\tagy:c1\n");
         assert!(agy.contains("args \"-c\" \"exec agy --conversation 'c1'\""));
     }
 
     #[test]
     fn 保存したタブがなければmainタブだけ() {
-        assert!(render("/p", "claude", "").contains("    tab name=\"main\" {\n        pane\n    }"));
+        assert!(render("/p", "claude", "flock", "").contains("    tab name=\"main\" {\n        pane\n    }"));
     }
 }
