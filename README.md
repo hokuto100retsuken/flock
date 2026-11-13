@@ -51,6 +51,28 @@ The previous tabs are reopened however the session ended, whether with Ctrl+q or
 
 flock starts zellij with `pane_frame_style full`, so the pane you work in gets a frame and no lines are drawn around the agent list and the log.
 
+### Resuming past conversations
+
+1. Click `＋ new` in the sidebar, then `Resume`. A floating list opens.
+2. Type to filter by title or folder name. `Backspace` deletes a character.
+3. Move with `↑` / `↓`, then press `Enter` or click a row. The conversation opens in a new tab in its folder, with `claude --resume <ID>` or `agy --conversation <ID>`, and the list closes. `Esc` closes the list without opening anything.
+
+A resumed tab is reopened with its conversation after Ctrl+q, like any other tab.
+
+The list shows up to 50 conversations from all folders, newest first:
+
+- Claude Code: `~/.claude/projects/*/*.jsonl`. The title is the one you set with `/rename`, or the one Claude Code generated. Conversations without a title, and old conversations that were continued in another one, are left out.
+- Antigravity CLI: `~/.gemini/antigravity-cli/conversation_summaries.db`, opened read-only. Sub-conversations and empty ones are left out.
+- Conversations whose folder no longer exists are left out. Files that can't be read are skipped.
+
+The list comes from `flock history`, which you can also run yourself. It prints one conversation per line, separated by tabs: agent, conversation ID, last updated (local time), folder, and title.
+
+```console
+$ flock history
+claude	0b6c…	11/13 14:02	/Users/me/src/app	Fix the login redirect
+agy	5f2e…	11/13 11:40	/Users/me/src/api	Add rate limiting
+```
+
 ### With Antigravity CLI
 
 1. Install Antigravity CLI and run `agy` once, so that `~/.gemini` exists.
